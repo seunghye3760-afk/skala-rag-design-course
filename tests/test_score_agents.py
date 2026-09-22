@@ -3,7 +3,7 @@ import pytest
 
 import kv_eval.llm
 from kv_eval.agents import domain, trl
-from kv_eval.agents._judge import _CritScore, _ScoreBatch
+from kv_eval.agents._judge import _CritScore
 from kv_eval.config import rubrics
 from kv_eval.graph.task_schema import Evidence, Locator, ScoreTask
 
@@ -21,15 +21,17 @@ def _ev(eid, cid, grade="B", stance="pro"):
 
 
 class _FakeLLM:
-    def __init__(self, batch):
-        self.batch, self.prompts = batch, []
+    """항목당 1회 호출 구조: invoke마다 결과 큐에서 하나씩 꺼내 돌려준다."""
+
+    def __init__(self, *scores):
+        self.queue, self.prompts = list(scores), []
 
     def with_structured_output(self, schema):
         return self
 
     def invoke(self, prompt):
         self.prompts.append(prompt)
-        return self.batch
+        return self.queue.pop(0)
 
 
 @pytest.fixture
@@ -38,10 +40,10 @@ def real_scoring(monkeypatch):
 
 
 def test_domain_maps_llm_output_and_na_without_llm(real_scoring, monkeypatch):
-    fake = _FakeLLM(_ScoreBatch(results=[_CritScore(
+    fake = _FakeLLM(_CritScore(
         criterion_id="DOM-3", score="4", evidence_ids=["e1", "ghost"],
         rationale="동시 세션 1.8배 실측. 5점은 처리량 동반 1.5배 근거가 없어 주지 않음.",
-        confidence="medium", intra_conflict=False)]))
+        confidence="medium", intra_conflict=False))
     monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: fake)
 
     task = ScoreTask(tech=TECH, agent_type="domain", criterion_ids=["DOM-3", "DOM-4"],
@@ -51,14 +53,32 @@ def test_domain_maps_llm_output_and_na_without_llm(real_scoring, monkeypatch):
     assert [r.criterion_id for r in out] == ["DOM-3", "DOM-4"]     # 요청 순서 유지
     r3, r4 = out
     assert r3.score == 4 and r3.agent_type == "domain" and r3.tech_id == "turboquant"
+    assert r3.cap_applied is None                                  # 상한 기록은 rules/caps.py 몫
     assert [b.evidence_id for b in r3.evidence] == ["e1"]          # 목록 밖 id(ghost)는 버림
     assert r3.evidence[0].grade == "B" and r3.evidence[0].source == "실측기"
     assert r4.score == "NA" and "정보 공백" in r4.rationale        # 근거 0건은 LLM 없이 NA
     assert len(fake.prompts) == 1 and "### DOM-4" not in fake.prompts[0]   # 근거 0건 항목은 채점 요청 안 함
 
 
+def test_one_llm_call_per_criterion(real_scoring, monkeypatch):
+    """항목 누락 방지: 항목 5개 × 대량 근거를 한 번에 보내지 않고 항목당 1회 호출."""
+    fake = _FakeLLM(
+        _CritScore(criterion_id="DOM-1", score="3", evidence_ids=["e1"], rationale="r", confidence="low"),
+        _CritScore(criterion_id="DOM-2", score="2", evidence_ids=["e2"], rationale="r", confidence="low"))
+    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: fake)
+
+    task = ScoreTask(tech=TECH, agent_type="domain", criterion_ids=["DOM-1", "DOM-2"],
+                     evidence=[_ev("e1", "DOM-1"), _ev("e2", "DOM-2")])
+    out = domain.score(task, rubrics())
+    assert len(fake.prompts) == 2                                   # 호출 2회 (항목당 1회)
+    assert "### DOM-1" in fake.prompts[0] and "### DOM-2" not in fake.prompts[0]
+    assert "### DOM-2" in fake.prompts[1] and "### DOM-1" not in fake.prompts[1]
+    assert [(r.criterion_id, r.score) for r in out] == [("DOM-1", 3), ("DOM-2", 2)]
+
+
 def test_prompt_contains_rubric_addon_and_evidence(real_scoring, monkeypatch):
-    fake = _FakeLLM(_ScoreBatch(results=[]))
+    fake = _FakeLLM(_CritScore(criterion_id="DOM-3", score="3", evidence_ids=[],
+                               rationale="r", confidence="low"))
     monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: fake)
 
     task = ScoreTask(tech=TECH, agent_type="domain", criterion_ids=["DOM-3"],
@@ -68,22 +88,15 @@ def test_prompt_contains_rubric_addon_and_evidence(real_scoring, monkeypatch):
     assert "TurboQuant" in p and "도메인 평가 에이전트" in p        # {tech}·{agent_title} 치환
     assert "같은 GPU 수 기준" in p                                  # 루브릭 본문
     assert "검증 범위 밖" in p                                       # prompts/score/domain.md 포함
+    assert "인용(evidence_ids)한 근거의 claim·발췌에 있는 것만" in p  # rationale 수치 지시
     assert "(e1) [B|pro]" in p and "동시 세션 수가 1.8배" in p       # 근거 목록·발췌
 
 
-def test_missing_criterion_in_llm_response_marked_for_rescore(real_scoring, monkeypatch):
-    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: _FakeLLM(_ScoreBatch(results=[])))
-    task = ScoreTask(tech=TECH, agent_type="domain", criterion_ids=["DOM-3"],
-                     evidence=[_ev("e1", "DOM-3")])
-    out = domain.score(task, rubrics())
-    assert out[0].score == "NA" and "재채점" in out[0].rationale
-
-
 def test_trl_uses_ordinal_scale_addon(real_scoring, monkeypatch):
-    fake = _FakeLLM(_ScoreBatch(results=[_CritScore(
+    fake = _FakeLLM(_CritScore(
         criterion_id="TRL-1", score="3", evidence_ids=["e1"],
         rationale="GPU 1대 표준 벤치마크 실측. 4점은 서빙 엔진 통합 측정 근거가 없어 주지 않음.",
-        confidence="medium")]))
+        confidence="medium"))
     monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: fake)
 
     task = ScoreTask(tech=TECH, agent_type="trl", criterion_ids=["TRL-1"],

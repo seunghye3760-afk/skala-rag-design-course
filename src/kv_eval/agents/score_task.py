@@ -43,6 +43,21 @@ def _fallback(task: ScoreTask, error: Exception) -> list[CriterionResult]:
     ]
 
 
+def _force_intra_conflict(results: list[CriterionResult]) -> list[CriterionResult]:
+    """인용 근거의 A·B등급이 pro/con으로 갈리면 intra_conflict는 참이어야 한다 (설계서 C-4).
+
+    인용 목록만으로 기계 판정 가능한 속성인데 채점 LLM이 자주 빠뜨려 균형 점검이
+    재채점 라운드를 소모하므로, 규칙대로 코드가 확정한다 (네 관점 공통 지점)."""
+    out = []
+    for r in results:
+        strong = [b for b in r.evidence if b.grade in ("A", "B")]
+        if (not r.intra_conflict and any(b.stance == "pro" for b in strong)
+                and any(b.stance == "con" for b in strong)):
+            r = r.model_copy(update={"intra_conflict": True})
+        out.append(r)
+    return out
+
+
 def score_task(task: ScoreTask) -> dict:
     if os.getenv("KV_FAKE") == "1":
         return {"criterion_results": fake_scores(task)}
@@ -58,4 +73,4 @@ def score_task(task: ScoreTask) -> dict:
             results = agent.score(task, rub)
         except Exception as e2:  # noqa: BLE001
             results = _fallback(task, e2)
-    return {"criterion_results": results}
+    return {"criterion_results": _force_intra_conflict(results)}

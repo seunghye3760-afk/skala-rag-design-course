@@ -31,10 +31,6 @@ class _CritScore(BaseModel):
     # LLM이 지어낸 문구가 검증 없이 새어 나갈 수 있다.
 
 
-class _ScoreBatch(BaseModel):
-    results: list[_CritScore]
-
-
 def llm_scores(task: ScoreTask, rubrics: dict, agent: str, prompt_file: str) -> list[CriterionResult]:
     if os.getenv("KV_FAKE") == "1":
         return fake_scores(task)
@@ -43,33 +39,29 @@ def llm_scores(task: ScoreTask, rubrics: dict, agent: str, prompt_file: str) -> 
     for e in task.evidence:
         by_cid.setdefault(e.criterion_id, []).append(e)
 
+    # 항목당 LLM 1회 호출: 5개 항목 × 근거 수백 건을 한 번에 보내면
+    # 긴 응답에서 항목이 누락되는 문제가 있어(전체 실행에서 NA 10건 확인) 항목 단위로 쪼갠다.
     results: dict[str, CriterionResult] = {}
-    todo = [cid for cid in task.criterion_ids if by_cid.get(cid)]
+    pool = {e.evidence_id: e for e in task.evidence}
     for cid in task.criterion_ids:
-        if cid not in todo:                # 근거 0건은 LLM 없이 규칙으로 NA (na_definition)
+        evs = by_cid.get(cid)
+        if not evs:                        # 근거 0건은 LLM 없이 규칙으로 NA (na_definition)
             results[cid] = _na(task, cid, "긍정·비판 쿼리를 모두 실행했으나 관련 근거 0건 — 공개 근거 없음(정보 공백)")
+            continue
 
-    if todo:
         from ..llm import chat_model
 
-        prompt = _build_prompt(task, rubrics, agent, prompt_file, todo, by_cid)
-        got = {r.criterion_id: r for r in
-               chat_model().with_structured_output(_ScoreBatch).invoke(prompt).results}
-        pool = {e.evidence_id: e for e in task.evidence}
-        for cid in todo:
-            r = got.get(cid)
-            if r is None:                  # 응답 누락 — balance_check가 형식 오류로 재채점하도록 표시
-                results[cid] = _na(task, cid, "LLM 응답에서 이 항목이 누락됨 — 재채점 필요")
-                continue
-            briefs = [EvidenceBrief(evidence_id=i, claim=pool[i].claim, source=pool[i].source_title,
-                                    date=pool[i].published_at, grade=pool[i].evidence_grade,
-                                    stance=pool[i].stance)
-                      for i in r.evidence_ids if i in pool]    # 목록 밖 id 인용은 버림
-            results[cid] = CriterionResult(
-                tech_id=task.tech["tech_id"], criterion_id=cid, agent_type=task.agent_type,
-                round=task.round, score="NA" if r.score == "NA" else int(r.score),
-                evidence=briefs, rationale=r.rationale, confidence=r.confidence,
-                intra_conflict=r.intra_conflict)   # cap_applied는 기본값(None) — rules/caps.py만 채움
+        prompt = _build_prompt(task, rubrics, agent, prompt_file, [cid], by_cid)
+        r = chat_model().with_structured_output(_CritScore).invoke(prompt)
+        briefs = [EvidenceBrief(evidence_id=i, claim=pool[i].claim, source=pool[i].source_title,
+                                date=pool[i].published_at, grade=pool[i].evidence_grade,
+                                stance=pool[i].stance)
+                  for i in r.evidence_ids if i in pool]        # 목록 밖 id 인용은 버림
+        results[cid] = CriterionResult(
+            tech_id=task.tech["tech_id"], criterion_id=cid, agent_type=task.agent_type,
+            round=task.round, score="NA" if r.score == "NA" else int(r.score),
+            evidence=briefs, rationale=r.rationale, confidence=r.confidence,
+            intra_conflict=r.intra_conflict)   # cap_applied는 기본값(None) — rules/caps.py만 채움
     return [results[cid] for cid in task.criterion_ids]
 
 
@@ -81,7 +73,10 @@ def _na(task: ScoreTask, cid: str, reason: str) -> CriterionResult:
 def _build_prompt(task: ScoreTask, rubrics: dict, agent: str, prompt_file: str,
                   cids: list[str], by_cid: dict[str, list[Evidence]]) -> str:
     cfg = rubrics["agents"][agent]
-    addon = cfg["judge_addon"]
+    addon = cfg["judge_addon"] + (
+        "\n- rationale에 쓰는 수치는 인용(evidence_ids)한 근거의 claim·발췌에 있는 것만 쓴다. "
+        "인용하지 않은 근거의 수치를 언급하려면 그 근거를 evidence_ids에 추가한다. "
+        "rationale 본문에 evidence_id 문자열을 쓰지 않는다.")
     pf = ROOT / prompt_file
     if pf.exists():
         addon += "\n\n" + pf.read_text(encoding="utf-8")
