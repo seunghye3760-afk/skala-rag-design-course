@@ -4,7 +4,7 @@ LLM은 루브릭 문구에 맞는 점수·라벨을 고르고 근거는 evidence
 EvidenceBrief는 인용된 id로 실제 Evidence에서 코드가 만든다 (없는 출처·수치 방지).
 점수 상한·하한·TRL 게이트는 여기서 하지 않는다 — rules/ 코드가 확정 (apply_caps가 덮어씀).
 
-KV_FAKE_EVIDENCE=1 이면 가짜 채점을 돌려준다 (그래프 뼈대 테스트용).
+KV_FAKE=1 이면 가짜 채점을 돌려준다 (그래프 뼈대 테스트용).
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class _ScoreBatch(BaseModel):
 
 
 def llm_scores(task: ScoreTask, rubrics: dict, agent: str, prompt_file: str) -> list[CriterionResult]:
-    if os.getenv("KV_FAKE_EVIDENCE") == "1":
+    if os.getenv("KV_FAKE") == "1":
         return fake_scores(task)
 
     by_cid: dict[str, list[Evidence]] = {}

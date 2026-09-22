@@ -34,7 +34,7 @@ class _FakeLLM:
 
 @pytest.fixture
 def real_scoring(monkeypatch):
-    monkeypatch.setenv("KV_FAKE_EVIDENCE", "0")   # conftest의 가짜 채점 플래그 해제
+    monkeypatch.setenv("KV_FAKE", "0")   # conftest의 가짜 채점 플래그 해제
 
 
 def test_domain_maps_llm_output_and_na_without_llm(real_scoring, monkeypatch):
