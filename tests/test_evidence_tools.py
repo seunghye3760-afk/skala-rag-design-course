@@ -230,3 +230,26 @@ def test_collect_rag_failure_falls_back_to_web(real_collect, monkeypatch):
     # evidence_sources에 RAG 포함 + 논문 검색 실패(인덱스 미구축 등) → 웹 근거만으로 진행
     pool = collect_evidence(_task(evidence_sources=("RAG: 논문", "웹: 벤치마크")))["evidence_pool"]
     assert len(pool) == 1 and pool[0].source_url == "https://a.com/1"
+
+
+def test_collect_rag_filters_by_tech_and_fills_published(real_collect, monkeypatch):
+    import kv_eval.tools.paper_search as paper_search
+
+    from kv_eval.graph.task_schema import Chunk, Locator
+
+    seen = []
+
+    def fake_search(query, k=5, doc_ids=None):
+        seen.append(doc_ids)
+        return [Chunk(chunk_id="turboquant-p6-1", text="논문 본문",
+                      locator=Locator(doc_id="turboquant", page=6))]
+
+    monkeypatch.setattr(paper_search, "search", fake_search)
+    monkeypatch.setattr(collect_mod, "_extract",
+                        lambda task, text, hint_source: [_item(source_type="논문")])
+    pool = collect_evidence(_task(evidence_sources=("RAG: 논문",)))["evidence_pool"]
+
+    assert seen and all(d == ["turboquant"] for d in seen)      # 해당 기술 논문만 검색
+    paper = next(e for e in pool if e.source_type == "논문")
+    assert paper.published_at == "2025-04-28"                    # manifest 게재일 반영 (recency 규칙용)
+    assert paper.locator.page == 6
