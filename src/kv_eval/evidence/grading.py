@@ -27,7 +27,8 @@ def _is_secondary(src: str) -> bool:
     return False
 
 
-def grade(source_type: str, measurement_type: str, is_independent: bool) -> str:
+def grade(source_type: str, measurement_type: str, is_independent: bool,
+          cited_primary_type: str | None = None) -> str:
     """A 1차·독립 실측(또는 공시) / B 1차·당사자 / C 시뮬레이션·추정 / D 2차 자료.
 
     - 2차 자료(원출처 불명 기사·커뮤니티·비공식 블로그)는 내용과 무관하게 D
@@ -36,11 +37,19 @@ def grade(source_type: str, measurement_type: str, is_independent: bool) -> str:
     - 실측·재현은 독립 주체면 A, 개발 주체·이해당사자면 B
     - 의견·발언은 당사자면 B(공식 발표), 독립이면 C(추정 기반 분석)
     - 판정 불가(모르는 유형·조건 없는 수치)는 보수적으로 D
+
+    cited_primary_type: 2차 자료가 특정 1차 출처(예: '논문', '공식 문서', '보도자료')를
+    구체적으로 인용하고 있으면 그 유형 (막연한 "보도에 따르면"은 제외). 이 경우 2차
+    자료라는 이유만으로 D를 매기지 않고 인용된 1차 출처 유형으로 재분류한다 (설계서 C-4
+    "재분류"). LLM이 인용을 식별한 것을 근거로 하며, 인용된 원문을 별도로 fetch해서
+    재확인하는 단계는 포함하지 않는다.
     """
     src = source_type.strip().lower()
     mt = measurement_type.strip().lower()
     if _is_secondary(src):
-        return "D"
+        if not cited_primary_type:
+            return "D"
+        src = cited_primary_type.strip().lower()   # 원출처 유형으로 재분류하고 계속 판정
     if any(k in src for k in _DISCLOSURE):
         return "A"
     if any(k in mt for k in _ESTIMATE):
