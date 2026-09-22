@@ -9,6 +9,7 @@ from collections import defaultdict
 
 from langgraph.types import Send
 
+from .. import progress
 from ..config import agent_of, criteria_list, criterion
 from .reducers import evidence_for
 from .state import MainState
@@ -33,6 +34,7 @@ def fan_out_collect(state: MainState) -> list[Send]:
     else:
         cells = [(_tech(state, x.tech_id), criterion(rub, x.criterion_id), x.hint)
                  for x in state.get("retry_targets", []) if x.kind == "research"]
+    progress.step("dispatch_collect", f"수집 작업 {len(cells)}개 생성 (round {rnd})")
     return [Send("collect_evidence", CollectTask(tech=t, criterion=c, round=rnd, rewrite_hint=h))
             for t, c, h in cells]
 
@@ -59,13 +61,16 @@ def fan_out_score(state: MainState) -> list[Send]:
         sends.append(Send("score_task", ScoreTask(
             tech=_tech(state, tech_id), agent_type=agent, criterion_ids=cids, evidence=ev,
             tech_brief=state.get("tech_briefs", {}).get(tech_id, {}), round=rnd)))
+    progress.step("score_dispatch", f"채점 작업 {len(sends)}개 생성 (round {rnd})")
     return sends
 
 
 def evidence_join(state: MainState) -> dict:
     """수집 병렬 작업이 모두 끝난 뒤 한 번 실행된다 (join)."""
+    progress.step("evidence_join", f"근거 {len(state.get('evidence_pool', []))}건 누적")
     return {}
 
 
 def score_join(state: MainState) -> dict:
+    progress.step("score_join", f"채점 결과 {len(state.get('criterion_results', []))}건 누적")
     return {}

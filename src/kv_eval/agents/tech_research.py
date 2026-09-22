@@ -21,6 +21,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .. import progress
 from ..config import ROOT, output_root, runtime
 from ..graph.state import MainState
 from ..graph.task_schema import Chunk
@@ -74,9 +75,15 @@ def tech_research(state: MainState) -> dict:
     briefs: dict[str, dict] = {}
     for tech in state["technologies"]:
         items = {**{f: FIELD_QUESTIONS[f] for f in BRIEF_FIELDS}, **COMMON_QUESTIONS}
-        briefs[tech["tech_id"]] = {key: _answer(tech, q, extract, rewrite) for key, q in items.items()}
+        progress.step("tech_research", f"{tech['tech_id']} — {len(items)}개 질문 조사 시작")
+        brief: dict[str, dict] = {}
+        for key, q in items.items():
+            brief[key] = _answer(tech, q, extract, rewrite)
+            progress.step("tech_research", f"{tech['tech_id']} · {key} — {brief[key]['status']}")
+        briefs[tech["tech_id"]] = brief
 
     _save(state.get("run_id", "manual"), briefs)
+    progress.step("tech_research", "완료")
     return {"tech_briefs": briefs}
 
 

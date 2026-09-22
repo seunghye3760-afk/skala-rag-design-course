@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import traceback
 
+from .. import progress
 from ..graph.task_schema import CriterionResult, ScoreTask
 from ..config import rubrics
 from . import domain, market, stakeholder, trl
@@ -30,8 +31,8 @@ AGENTS = {"trl": trl, "market": market, "stakeholder": stakeholder, "domain": do
 
 
 def _fallback(task: ScoreTask, error: Exception) -> list[CriterionResult]:
-    print(f"[score_task] {task.agent_type}/{task.tech['tech_id']} 재요청도 실패, NA로 처리: "
-          f"{type(error).__name__}: {error}")
+    progress.step("score_task", f"{task.agent_type}/{task.tech['tech_id']} 재요청도 실패, NA로 처리: "
+                  f"{type(error).__name__}: {error}")
     return [
         CriterionResult(
             tech_id=task.tech["tech_id"], criterion_id=cid, agent_type=task.agent_type, round=task.round,
@@ -64,11 +65,13 @@ def score_task(task: ScoreTask) -> dict:
 
     rub = rubrics()
     agent = AGENTS[task.agent_type]
+    progress.step("score_task", f"{task.tech['tech_id']} {task.agent_type} "
+                  f"({', '.join(task.criterion_ids)}) 시작")
     try:
         results = agent.score(task, rub)
     except Exception:  # noqa: BLE001 — 설계서 D-10: 형식 오류 시 즉시 1회 재요청 (에이전트별 예외 타입 불명)
-        print(f"[score_task] {task.agent_type}/{task.tech['tech_id']} 1차 채점 실패, 1회 재요청:\n"
-              f"{traceback.format_exc(limit=2)}")
+        progress.step("score_task", f"{task.agent_type}/{task.tech['tech_id']} 1차 채점 실패, 1회 재요청:\n"
+                      f"{traceback.format_exc(limit=2)}")
         try:
             results = agent.score(task, rub)
         except Exception as e2:  # noqa: BLE001
