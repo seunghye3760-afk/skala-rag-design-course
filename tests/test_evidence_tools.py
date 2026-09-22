@@ -235,7 +235,7 @@ def test_collect_rag_failure_falls_back_to_web(real_collect, monkeypatch):
 # ---------- 재분류 확인 게이트 (설계서 C-4: 원문을 확인하면 재분류, 미확인은 D) ----------
 
 def _gate_fixtures(monkeypatch, fetch_ok: bool):
-    monkeypatch.setenv("KV_FAKE_EVIDENCE", "0")
+    monkeypatch.setenv("KV_FAKE", "0")
     monkeypatch.setattr(web_search, "search",
                         lambda q, max_results=5: [{"url": "https://news.com/1", "title": "기사",
                                                    "content": "c", "published_date": None}])
