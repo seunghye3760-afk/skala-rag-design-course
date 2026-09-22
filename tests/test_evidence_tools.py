@@ -35,6 +35,18 @@ def test_grade(source_type, measurement_type, is_independent, expected):
     assert grade(source_type, measurement_type, is_independent) == expected
 
 
+@pytest.mark.parametrize("source_type,measurement_type,is_independent,cited,expected", [
+    # 2차 자료(기사)가 논문을 구체적으로 인용 → 원출처 등급으로 재분류 (설계서 C-4 "재분류")
+    ("뉴스 기사", "실측", True, "논문", "A"),          # 논문+독립 실측 → A
+    ("뉴스 기사", "실측", False, "논문", "B"),         # 논문+당사자 실측 → B
+    ("커뮤니티", "발표", False, "공시", "A"),          # 공시 인용은 당사자여도 A
+    ("뉴스 기사", "실측", True, None, "D"),            # 인용 없으면 그대로 D
+])
+def test_grade_regrades_when_secondary_cites_primary(source_type, measurement_type,
+                                                      is_independent, cited, expected):
+    assert grade(source_type, measurement_type, is_independent, cited) == expected
+
+
 def test_grade_covers_collect_enum_vocabulary():
     """collect._Item의 enum 어휘가 grading 키워드와 동기화됐는지 가드.
     깨지면 두 파일 중 한쪽만 수정된 것 — 매핑을 함께 갱신할 것."""

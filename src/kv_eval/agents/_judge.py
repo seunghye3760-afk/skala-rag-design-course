@@ -25,8 +25,10 @@ class _CritScore(BaseModel):
     evidence_ids: list[str]            # [근거 목록]의 evidence_id만 인용
     rationale: str                     # 점수 근거 2~3문장 + 바로 위 점수를 주지 않은 이유 1문장
     confidence: Literal["high", "medium", "low"]
-    cap_applied: str | None = None
     intra_conflict: bool = False
+    # cap_applied는 여기 없다: 설계서 D-9(3)이 "코드가 상한 조정하고 cap_applied에 기록"한다고
+    # 명시했으므로 rules/caps.py만 쓴다. LLM에게 물어보면 코드가 안 건드리는 경로(TRL 등)에서
+    # LLM이 지어낸 문구가 검증 없이 새어 나갈 수 있다.
 
 
 class _ScoreBatch(BaseModel):
@@ -67,7 +69,7 @@ def llm_scores(task: ScoreTask, rubrics: dict, agent: str, prompt_file: str) -> 
                 tech_id=task.tech["tech_id"], criterion_id=cid, agent_type=task.agent_type,
                 round=task.round, score="NA" if r.score == "NA" else int(r.score),
                 evidence=briefs, rationale=r.rationale, confidence=r.confidence,
-                cap_applied=r.cap_applied, intra_conflict=r.intra_conflict)
+                intra_conflict=r.intra_conflict)   # cap_applied는 기본값(None) — rules/caps.py만 채움
     return [results[cid] for cid in task.criterion_ids]
 
 
