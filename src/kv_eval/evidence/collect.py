@@ -41,6 +41,9 @@ class _Item(BaseModel):
     cited_primary_type: Literal["논문", "공식 문서", "공식 기술 블로그", "저장소",
                                 "보도자료", "공시", "독립 벤치마크"] | None = None
     # 이 글이 구체적으로 식별 가능한 1차 출처를 인용하면 그 유형 (설계서 C-4 재분류), 아니면 null
+    primary_source_url: str | None = None
+    # 그 1차 출처의 URL이 원문에 명시돼 있으면 그대로 (재분류 확인 게이트용 — 설계서 C-4
+    # "원문을 확인하면 재분류"). collect가 이 URL을 실제 fetch해 성공한 경우에만 승급한다
 
 
 class _Extraction(BaseModel):
@@ -92,14 +95,32 @@ def _collect_once(task: CollectTask, queries: dict) -> list[Evidence]:
                                     len(out), source_title=chunk.locator.doc_id or "corpus",
                                     publisher="corpus", locator=chunk.locator, force_source_type="논문"))
 
-    for url in _search_web(queries, max_results):
+    # 1차 패스: 검색 결과 fetch·추출 + 인용된 1차 출처 URL을 대기열에 추가(셀당 최대 5건).
+    # 추가된 1차 출처도 같은 파이프라인으로 fetch·추출되어 자체 근거가 된다.
+    urls = _search_web(queries, max_results)
+    fetched: list[tuple[str, dict, list[_Item]]] = []
+    followed, i = 0, 0
+    while i < len(urls):
+        url = urls[i]
+        i += 1
         page = _fetch_page(url)
         if not page or not page["text"].strip():
             continue
-        out.extend(_to_evidence(task, _extract(task, page["text"], hint_source=page["publisher"]),
-                                len(out), source_title=page["title"] or url, publisher=page["publisher"],
-                                source_url=url, published_at=page["published_at"],
-                                locator=Locator(url=url)))
+        items = _extract(task, page["text"], hint_source=page["publisher"])
+        fetched.append((url, page, items))
+        for it in items:
+            pu = (it.primary_source_url or "").strip()
+            if pu.startswith("http") and pu not in urls and followed < 5:
+                urls.append(pu)
+                followed += 1
+
+    # 2차 패스: 근거 생성. 인용 원문(fetch 성공)이 확인된 경우에만 재분류 승급 (설계서 C-4)
+    confirmed = {u for u, _, _ in fetched}
+    for url, page, items in fetched:
+        out.extend(_to_evidence(task, items, len(out), source_title=page["title"] or url,
+                                publisher=page["publisher"], source_url=url,
+                                published_at=page["published_at"], locator=Locator(url=url),
+                                confirmed_urls=confirmed))
     return [e for e in out if e.relevant]
 
 
@@ -165,6 +186,8 @@ def _extract(task: CollectTask, text: str, hint_source: str) -> list[_Item]:
 - source_type이 기사·블로그·커뮤니티 같은 2차 자료인데, 이 글이 특정 1차 출처(예: 논문,
   공식 문서·발표, 보도자료)를 구체적으로 인용하고 있으면 cited_primary_type에 그 유형을
   적는다. "보도에 따르면", "알려진 바로는" 같은 막연한 언급은 적지 않는다(null로 둔다).
+- cited_primary_type을 적었고 그 1차 출처의 URL이 원문에 있으면 primary_source_url에 그대로 적는다.
+  원문에 없는 URL을 만들지 않는다. URL이 없으면 null (이 경우 재분류 승급은 적용되지 않는다).
 
 [원문]
 {text[:6000]}"""
@@ -175,18 +198,24 @@ def _extract(task: CollectTask, text: str, hint_source: str) -> list[_Item]:
 
 def _to_evidence(task: CollectTask, items: list[_Item], offset: int, *, source_title: str,
                  publisher: str, locator: Locator, source_url: str | None = None,
-                 published_at: str | None = None, force_source_type: str | None = None) -> list[Evidence]:
+                 published_at: str | None = None, force_source_type: str | None = None,
+                 confirmed_urls: set[str] | None = None) -> list[Evidence]:
     tech_id, cid = task.tech["tech_id"], task.criterion["id"]
     out = []
     for i, item in enumerate(items):
         src_type = force_source_type or item.source_type
+        # 재분류 확인 게이트 (설계서 C-4 "원문을 확인하면 재분류, 원문 미확인 수치는 D"):
+        # 인용 감지(cited_primary_type)만으로는 승급하지 않고, 인용된 원문 URL을
+        # 실제 fetch해서 확인한 경우에만 원출처 유형을 grading에 전달한다
+        cited = (item.cited_primary_type
+                 if (item.primary_source_url or "").strip() in (confirmed_urls or set()) else None)
         out.append(Evidence(
             evidence_id=f"{tech_id}-{cid}-r{task.round}-{offset + i}",
             tech_id=tech_id, criterion_id=cid, claim=item.claim,
             source_title=source_title, source_url=source_url, publisher=publisher,
             published_at=published_at, accessed_at=date.today().isoformat(),
             source_type=src_type, evidence_grade=grade(src_type, item.measurement_type,
-                                                        item.is_independent, item.cited_primary_type),
+                                                        item.is_independent, cited),
             stance=item.stance, measurement_type=item.measurement_type, conditions=item.conditions,
             excerpt=item.excerpt, locator=locator, relevant=item.relevant, round=task.round))
     return out

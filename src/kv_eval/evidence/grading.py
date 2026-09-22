@@ -41,8 +41,9 @@ def grade(source_type: str, measurement_type: str, is_independent: bool,
     cited_primary_type: 2차 자료가 특정 1차 출처(예: '논문', '공식 문서', '보도자료')를
     구체적으로 인용하고 있으면 그 유형 (막연한 "보도에 따르면"은 제외). 이 경우 2차
     자료라는 이유만으로 D를 매기지 않고 인용된 1차 출처 유형으로 재분류한다 (설계서 C-4
-    "재분류"). LLM이 인용을 식별한 것을 근거로 하며, 인용된 원문을 별도로 fetch해서
-    재확인하는 단계는 포함하지 않는다.
+    "재분류"). 호출자(evidence/collect.py)는 인용된 원문 URL을 실제 fetch해서 확인한
+    경우에만 이 값을 전달한다 — 원문 미확인이면 None을 넘겨 D를 유지한다 (설계서 C-4
+    "원문 미확인 수치는 D").
     """
     src = source_type.strip().lower()
     mt = measurement_type.strip().lower()

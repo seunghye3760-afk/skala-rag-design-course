@@ -230,3 +230,52 @@ def test_collect_rag_failure_falls_back_to_web(real_collect, monkeypatch):
     # evidence_sources에 RAG 포함 + 논문 검색 실패(인덱스 미구축 등) → 웹 근거만으로 진행
     pool = collect_evidence(_task(evidence_sources=("RAG: 논문", "웹: 벤치마크")))["evidence_pool"]
     assert len(pool) == 1 and pool[0].source_url == "https://a.com/1"
+
+
+# ---------- 재분류 확인 게이트 (설계서 C-4: 원문을 확인하면 재분류, 미확인은 D) ----------
+
+def _gate_fixtures(monkeypatch, fetch_ok: bool):
+    monkeypatch.setenv("KV_FAKE_EVIDENCE", "0")
+    monkeypatch.setattr(web_search, "search",
+                        lambda q, max_results=5: [{"url": "https://news.com/1", "title": "기사",
+                                                   "content": "c", "published_date": None}])
+
+    def fetch(url):
+        if "arxiv" in url and not fetch_ok:
+            raise RuntimeError("원문 접근 실패")
+        return {"url": url, "title": url, "text": f"본문 {url}", "publisher": "P", "published_at": None}
+
+    monkeypatch.setattr(open_source, "fetch", fetch)
+
+    def extract(task, text, hint_source):
+        if "news.com" in text:      # D 후보 기사가 arXiv 논문을 인용 (독립 실측 보도)
+            return [_item(source_type="기사", measurement_type="실측", is_independent=True,
+                          cited_primary_type="논문", primary_source_url="https://arxiv.org/abs/1")]
+        return [_item(source_type="논문", measurement_type="실측", is_independent=False)]
+
+    monkeypatch.setattr(collect_mod, "_extract", extract)
+
+
+def test_regrade_upgrades_only_after_primary_fetch_confirmed(monkeypatch):
+    _gate_fixtures(monkeypatch, fetch_ok=True)
+    pool = collect_evidence(_task())["evidence_pool"]
+    by_url = {e.source_url: e.evidence_grade for e in pool}
+    assert by_url["https://news.com/1"] == "A"             # 원문 확인됨 → 인용 유형(논문)으로 재분류
+    assert by_url["https://arxiv.org/abs/1"] == "B"        # 추적된 1차 원문도 자체 근거로 수집
+
+
+def test_regrade_stays_d_when_primary_fetch_fails(monkeypatch):
+    _gate_fixtures(monkeypatch, fetch_ok=False)
+    pool = collect_evidence(_task())["evidence_pool"]
+    assert {e.source_url for e in pool} == {"https://news.com/1"}
+    assert pool[0].evidence_grade == "D"                   # 원문 미확인 → D 유지 (설계서 C-4)
+
+
+def test_regrade_stays_d_without_primary_url(monkeypatch):
+    _gate_fixtures(monkeypatch, fetch_ok=True)
+    monkeypatch.setattr(collect_mod, "_extract",
+                        lambda task, text, hint_source: [
+                            _item(source_type="기사", measurement_type="실측", is_independent=True,
+                                  cited_primary_type="논문", primary_source_url=None)])
+    pool = collect_evidence(_task())["evidence_pool"]
+    assert pool[0].evidence_grade == "D"                   # 인용 감지만으로는 승급 안 함
