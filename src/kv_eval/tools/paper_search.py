@@ -12,7 +12,13 @@ from __future__ import annotations
 
 from ..graph.task_schema import Chunk
 from ..rag.corpus import doc_ids as known_doc_ids
+from ..rag.corpus import doc_row
 from ..rag.retriever import hybrid_search
+
+
+def doc_published(doc_id: str) -> str | None:
+    """manifest의 게재일(YYYY-MM-DD). 논문 Evidence의 published_at에 쓴다 (recency 규칙용)."""
+    return doc_row(doc_id).get("published") or None
 
 
 def search(query: str, k: int = 5, doc_ids: list[str] | None = None) -> list[Chunk]:

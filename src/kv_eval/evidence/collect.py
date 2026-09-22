@@ -87,10 +87,13 @@ def _collect_once(task: CollectTask, queries: dict) -> list[Evidence]:
     out: list[Evidence] = []
 
     if uses_rag(task.criterion):
-        for chunk in _search_papers(queries):
+        from ..tools import paper_search
+
+        for chunk in _search_papers(task, queries):
             out.extend(_to_evidence(task, _extract(task, chunk.text, hint_source="논문"),
                                     len(out), source_title=chunk.locator.doc_id or "corpus",
-                                    publisher="corpus", locator=chunk.locator, force_source_type="논문"))
+                                    publisher="corpus", locator=chunk.locator, force_source_type="논문",
+                                    published_at=paper_search.doc_published(chunk.locator.doc_id)))
 
     for url in _search_web(queries, max_results):
         page = _fetch_page(url)
@@ -103,14 +106,15 @@ def _collect_once(task: CollectTask, queries: dict) -> list[Evidence]:
     return [e for e in out if e.relevant]
 
 
-def _search_papers(queries: dict) -> list[Chunk]:
+def _search_papers(task: CollectTask, queries: dict) -> list[Chunk]:
     from ..tools import paper_search   # rag/ 의존은 여기서만
 
     chunks: dict[str, Chunk] = {}
     for qs in queries.values():
         for q in qs:
-            try:
-                found = paper_search.search(q, k=runtime()["retrieval"]["top_k"])
+            try:                        # manifest의 doc_id == tech_id → 해당 기술 논문만 검색
+                found = paper_search.search(q, k=runtime()["retrieval"]["top_k"],
+                                            doc_ids=[task.tech["tech_id"]])
             except Exception:             # 인덱스 미구축·의존성 미설치 등 — 웹 근거만으로 진행
                 return []
             for c in found:
