@@ -11,6 +11,13 @@ embedding:
 retrieval:
   top_k: 5
   fusion: rrf          # FAISS(dense) + BM25(sparse) 순위 결합
+  candidate_k: 20      # 결합 전 각 검색기에서 가져오는 후보 수
+  rrf_k: 60            # RRF 상수 (LangChain EnsembleRetriever 기본값과 같음)
+  weights: [0.5, 0.5]  # [BM25, dense]. 20문항으로 튜닝하지 않음 (과적합 방지)
+
+chunk:
+  max_chars: 1200      # ≈ 300토큰. e5 512토큰 제한 안 → 세 후보를 같은 청크로 비교 (설계서 B-4 (6))
+  overlap_chars: 200   # 같은 절·쪽 안에서만 앞 청크 끝 문장을 겹침
 
 web_search:
   max_results: 5       # 두 기술에 동일 (설계서 C-5 검색 규칙)
