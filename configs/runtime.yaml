@@ -1,7 +1,7 @@
 # 실행 설정 (팀 공통). 개인 실험 값은 커밋하지 말 것.
 llm:
   provider: openai
-  model: ""            # TODO(팀): 사용할 OpenAI 모델명 확정 후 입력
+  model: "gpt-5.5"     # 이 키에서 쓸 수 있는 최상위 텍스트 채팅 모델 (2026-09-22 models.list 기준)
   temperature: 0
 
 embedding:
