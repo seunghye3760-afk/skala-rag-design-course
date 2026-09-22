@@ -1,1 +1,20 @@
-{"qid": "q01", "question": "예시 질문", "doc_id": "turboquant", "page": 1, "section": ""}
+{"qid": "turboquant-common_1", "doc_id": "turboquant", "origin": "공통 조사 질문", "question": "TurboQuant는 어떤 KV cache 병목(메모리 용량·대역폭)을 해결하려고 하는가?", "page": null, "section": null}
+{"qid": "turboquant-common_2", "doc_id": "turboquant", "origin": "공통 조사 질문", "question": "TurboQuant의 개선 효과를 얻으려면 어떤 조건이나 가정이 필요한가?", "page": null, "section": null}
+{"qid": "turboquant-common_3", "doc_id": "turboquant", "origin": "공통 조사 질문", "question": "TurboQuant 논문은 모델 품질과 추가 처리 비용(overhead)을 어떻게 평가했는가?", "page": null, "section": null}
+{"qid": "turboquant-common_4", "doc_id": "turboquant", "origin": "공통 조사 질문", "question": "TurboQuant 논문이 평가하지 않은 환경이나 조건은 무엇인가?", "page": null, "section": null}
+{"qid": "turboquant-TRL-1", "doc_id": "turboquant", "origin": "TRL-1", "question": "TurboQuant의 KV cache 실험은 어떤 GPU와 모델에서 실제로 측정되었는가?", "page": null, "section": null}
+{"qid": "turboquant-TRL-5", "doc_id": "turboquant", "origin": "TRL-5", "question": "TurboQuant를 적용하려면 별도 하드웨어나 모델 재학습이 필요한가?", "page": null, "section": null}
+{"qid": "turboquant-DOM-2", "doc_id": "turboquant", "origin": "DOM-2", "question": "TurboQuant 논문은 전력이나 에너지 효율을 보고하는가?", "page": null, "section": null}
+{"qid": "turboquant-DOM-3", "doc_id": "turboquant", "origin": "DOM-3", "question": "TurboQuant는 attention 계산 속도나 처리량을 얼마나 개선한다고 보고하는가?", "page": null, "section": null}
+{"qid": "turboquant-DOM-4", "doc_id": "turboquant", "origin": "DOM-4", "question": "TurboQuant는 LongBench와 Needle-In-A-Haystack에서 KV cache 비트 수별로 정확도가 어떻게 달라지는가?", "page": null, "section": null}
+{"qid": "turboquant-DOM-5", "doc_id": "turboquant", "origin": "DOM-5", "question": "TurboQuant는 기존 추론 스택에 어떤 방식으로 적용되며 calibration이 필요한가?", "page": null, "section": null}
+{"qid": "cxl_pnm-common_1", "doc_id": "cxl_pnm", "origin": "공통 조사 질문", "question": "CXL-PNM는 어떤 KV cache 병목(메모리 용량·대역폭)을 해결하려고 하는가?", "page": null, "section": null}
+{"qid": "cxl_pnm-common_2", "doc_id": "cxl_pnm", "origin": "공통 조사 질문", "question": "CXL-PNM의 개선 효과를 얻으려면 어떤 조건이나 가정이 필요한가?", "page": null, "section": null}
+{"qid": "cxl_pnm-common_3", "doc_id": "cxl_pnm", "origin": "공통 조사 질문", "question": "CXL-PNM 논문은 모델 품질과 추가 처리 비용(overhead)을 어떻게 평가했는가?", "page": null, "section": null}
+{"qid": "cxl_pnm-common_4", "doc_id": "cxl_pnm", "origin": "공통 조사 질문", "question": "CXL-PNM 논문이 평가하지 않은 환경이나 조건은 무엇인가?", "page": null, "section": null}
+{"qid": "cxl_pnm-TRL-1", "doc_id": "cxl_pnm", "origin": "TRL-1", "question": "CXL-PNM 시스템의 성능은 실제 하드웨어가 아니라 어떤 시뮬레이터로 평가되었는가?", "page": null, "section": null}
+{"qid": "cxl_pnm-TRL-5", "doc_id": "cxl_pnm", "origin": "TRL-5", "question": "CXL-PNM을 구현하려면 어떤 메모리 모듈과 PNM 연산 유닛이 필요한가?", "page": null, "section": null}
+{"qid": "cxl_pnm-DOM-2", "doc_id": "cxl_pnm", "origin": "DOM-2", "question": "CXL-PNM 논문은 GPU 대비 에너지 효율을 어떻게 보고하는가?", "page": null, "section": null}
+{"qid": "cxl_pnm-DOM-3", "doc_id": "cxl_pnm", "origin": "DOM-3", "question": "CXL-PNM은 1M 토큰 문맥 디코딩에서 GPU 기준 대비 처리량을 얼마나 개선하는가?", "page": null, "section": null}
+{"qid": "cxl_pnm-DOM-4", "doc_id": "cxl_pnm", "origin": "DOM-4", "question": "CXL-PNM의 토큰 선택(token selection)은 모델 정확도에 어떤 영향을 주는가?", "page": null, "section": null}
+{"qid": "cxl_pnm-DOM-5", "doc_id": "cxl_pnm", "origin": "DOM-5", "question": "CXL-PNM을 도입하려면 GPU 서버 구조를 어떻게 바꿔야 하는가?", "page": null, "section": null}
