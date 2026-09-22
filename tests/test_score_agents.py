@@ -41,7 +41,7 @@ def test_domain_maps_llm_output_and_na_without_llm(real_scoring, monkeypatch):
     fake = _FakeLLM(_ScoreBatch(results=[_CritScore(
         criterion_id="DOM-3", score="4", evidence_ids=["e1", "ghost"],
         rationale="동시 세션 1.8배 실측. 5점은 처리량 동반 1.5배 근거가 없어 주지 않음.",
-        confidence="medium", cap_applied=None, intra_conflict=False)]))
+        confidence="medium", intra_conflict=False)]))
     monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: fake)
 
     task = ScoreTask(tech=TECH, agent_type="domain", criterion_ids=["DOM-3", "DOM-4"],
