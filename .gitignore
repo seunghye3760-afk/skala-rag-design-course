@@ -19,6 +19,7 @@ data/processed/**
 data/indexes/**
 !data/**/.gitkeep
 .cache/
+.uv-cache/
 
 # 실행 결과 (최종본만 deliverables/로 옮겨 커밋)
 outputs/runs/**
