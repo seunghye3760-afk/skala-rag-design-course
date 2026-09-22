@@ -5,6 +5,7 @@
 """
 import argparse
 from datetime import datetime
+from pathlib import Path
 
 from kv_eval.graph.main import build_graph
 
@@ -21,6 +22,9 @@ def main():
     print(f"run_id: {run_id}")
     print(f"재시도 라운드: {final.get('retry_round', 0)}  정보 공백: {len(final.get('info_gaps', []))}개")
     print(f"보고서: {final['report_path']}")
+    pdf = Path(final["report_path"]).with_suffix(".pdf")   # report.py가 만들면 report.md 옆에 있다
+    if pdf.exists():
+        print(f"PDF: {pdf}")
 
 
 if __name__ == "__main__":
