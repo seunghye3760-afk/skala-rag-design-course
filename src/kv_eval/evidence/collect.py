@@ -139,7 +139,8 @@ def _extract(task: CollectTask, text: str, hint_source: str) -> list[_Item]:
 
     llm = chat_model()
     crit = task.criterion
-    f = cache_file("extract", f"{llm.model_name}|{task.tech['tech_id']}|{crit['id']}|"
+    # v2: 추출 프롬프트가 바뀌면(예: PR#5 cited_primary_type 추가) 캐시를 자연 무효화하는 버전 태그
+    f = cache_file("extract", f"v2|{llm.model_name}|{task.tech['tech_id']}|{crit['id']}|"
                               f"{hashlib.sha256(text.encode('utf-8')).hexdigest()}")
     if f.exists():
         return [_Item(**d) for d in json.loads(f.read_text(encoding="utf-8"))]
