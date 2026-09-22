@@ -1,0 +1,23 @@
+# 실행 설정 (팀 공통). 개인 실험 값은 커밋하지 말 것.
+llm:
+  provider: openai
+  model: ""            # TODO(팀): 사용할 OpenAI 모델명 확정 후 입력
+  temperature: 0
+
+embedding:
+  model: BAAI/bge-m3   # 최종 확정은 eval/retrieval 결과로 (설계서 B-4 (6))
+  device: cpu
+
+retrieval:
+  top_k: 5
+  fusion: rrf          # FAISS(dense) + BM25(sparse) 순위 결합
+
+web_search:
+  max_results: 5       # 두 기술에 동일 (설계서 C-5 검색 규칙)
+  period_from: "2025-01-01"
+
+retry:
+  max_rounds: 2        # 균형 점검 재시도 최대 라운드 (retry_round)
+  query_rewrite_max: 1 # 수집 단계 쿼리 재작성 (항목당)
+
+cache_dir: .cache      # 검색 캐시 (재현성·API 사용량 절감)

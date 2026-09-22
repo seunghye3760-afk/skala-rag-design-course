@@ -1,0 +1,16 @@
+flowchart TD
+    START([START]) --> CFG["load_config · 사람 입력<br/>기술·도메인 설정"]
+    CFG --> RUB["load_rubrics · 코드<br/>루브릭·규칙 로드"]
+    RUB --> RES["tech_research · LLM + RAG<br/>기술 조사 → tech_briefs"]
+    RES --> DC["dispatch_collect · 코드<br/>수집 작업 생성<br/>최초 36개<br/>재시도: 대상 항목만"]
+    DC -->|"Send × N"| COL["collect_evidence · 코드 + LLM 보조<br/>항목 1 × 기술 1 병렬 수집<br/>(그림 3)"]
+    COL --> EJ(["join · evidence_pool 누적"])
+    EJ --> FAN{"채점 작업 분배<br/>관점 4 × 기술 2 = Send × 8<br/>재시도: 대상 항목만"}
+    FAN --> S1["score_task · trl<br/>TRL-1~5 × 기술 2"] & S2["score_task · market<br/>MKT-1~4 × 기술 2"] & S3["score_task · stakeholder<br/>STK-1~4 × 기술 2"] & S4["score_task · domain<br/>DOM-1~5 × 기술 2"]
+    S1 & S2 & S3 & S4 --> SJ(["join · criterion_results 누적"])
+    SJ --> BAL{"balance_check · 코드<br/>공백·편향·조건 누락<br/>형식 오류?"}
+    BAL -->|"재검색 필요<br/>retry_round < 2"| DC
+    BAL -->|"형식 오류만<br/>retry_round < 2"| FAN
+    BAL -->|"문제 없음 또는 한도 소진<br/>(남은 항목 → info_gaps)"| RULE["apply_rules · 코드<br/>상한·하한 → TRL 산출<br/>→ 상충 후보 추출"]
+    RULE --> SYN["synthesize_report · LLM<br/>관점별 서술<br/>상충 후보를 근거·조건과 대조"]
+    SYN --> END([END · report.pdf 초안])

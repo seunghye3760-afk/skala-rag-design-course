@@ -1,0 +1,21 @@
+# 평가 대상 기술과 도메인 (설계서 D-2 technologies · domain)
+technologies:
+  - tech_id: turboquant
+    name: TurboQuant
+    group: SW
+    query_names: ["TurboQuant", "TurboQuant KV cache"]
+    category: KV cache quantization
+  - tech_id: cxl_pnm
+    name: CXL-PNM
+    group: HW
+    query_names: ["CXL-PNM KV cache", "processing near memory LLM KV cache"]
+    category: CXL processing-near-memory
+
+domain:
+  name: AI 데이터센터 LLM 추론 인프라
+  evaluator: 인프라 소유·운영 사업자
+  workload: 장문 LLM 추론
+  priority_metrics: [cost_per_token, energy_per_token, throughput, latency, quality, integration]
+  scenarios:
+    - "① 기존 GPU 서버 유지 환경"
+    - "② 서버 구조 변경 가능 환경"

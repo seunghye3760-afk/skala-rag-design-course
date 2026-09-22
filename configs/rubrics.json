@@ -1,0 +1,1071 @@
+{
+  "meta": {
+    "title": "KV cache 최적화 기술 다관점 평가 루브릭",
+    "domain": "AI 데이터센터 LLM 추론 인프라 (평가 주체: 인프라 소유·운영 사업자)",
+    "core_question": "TurboQuant(SW)와 CXL-PNM(HW)은 AI 데이터센터 추론 인프라에서 TRL·시장성·이해관계자·도메인 관점별로 어떻게 평가되며, 관점 간 평가는 어디서 엇갈리는가?",
+    "principle": "우열 판정 금지. 같은 기술이 관점에 따라 어떻게 다르게 평가되는지 비교·대조. 점수 합산·순위화 금지.",
+    "version": "v1.3 (2026-09-21, 설계 산출물 ver1.3과 일치)"
+  },
+  "tech_profiles": {
+    "TurboQuant": {
+      "camp": "SW",
+      "query_names": [
+        "TurboQuant",
+        "TurboQuant KV cache"
+      ],
+      "category": "KV cache quantization"
+    },
+    "CXL-PNM": {
+      "camp": "HW",
+      "query_names": [
+        "CXL-PNM KV cache",
+        "processing near memory LLM KV cache",
+        "CXL PIM LLM inference"
+      ],
+      "category": "CXL processing-near-memory"
+    }
+  },
+  "query_rules": {
+    "variables": {
+      "{tech}": "tech_profiles[*].query_names 각각으로 치환",
+      "{category}": "tech_profiles[*].category로 치환"
+    },
+    "symmetry": "두 기술에 같은 템플릿, 같은 max_results(5), 같은 검색 기간 적용",
+    "must_run": "항목마다 pro·con 쿼리를 모두 실행",
+    "recency": "2025-01 이후 자료 우선. 18개월 넘은 전망 자료만으로는 4점 이상 불가",
+    "dedup": "같은 기사의 재배포·같은 작성자의 글은 1건으로 계산"
+  },
+  "common_rules": {
+    "evidence_grades": {
+      "A": {
+        "name": "1차·독립 실측",
+        "definition": "개발 주체와 이해관계가 없는 제3자의 실측·재현, 또는 공식 공시(실적·양산)",
+        "examples": "독립 벤치마크, 제3자 재현 논문, 사업보고서"
+      },
+      "B": {
+        "name": "1차·당사자",
+        "definition": "개발 주체(또는 해당 진영 이해당사자)의 실측 결과·공식 발표",
+        "examples": "개발사 논문의 실하드웨어 실험, 공식 기술 블로그, 보도자료"
+      },
+      "C": {
+        "name": "1차·시뮬레이션/추정",
+        "definition": "시뮬레이터, 분석 모델, 비용 모델 등 추정 기반 결과 (작성 주체 무관)",
+        "examples": "사이클 단위 시뮬레이션, TCO 계산 모델"
+      },
+      "D": {
+        "name": "2차 자료",
+        "definition": "원출처를 확인할 수 없는 기사·블로그·커뮤니티 글, 조건 없는 수치",
+        "examples": "뉴스 헤드라인, 요약 블로그, SNS"
+      }
+    },
+    "regrade": "D등급 자료가 1차 출처를 인용하고 그 원문을 확인하면 원문 등급으로 재분류. 원문 미확인 수치는 D.",
+    "caps": [
+      {
+        "condition": "A 포함",
+        "max_score": 5,
+        "reason": "—"
+      },
+      {
+        "condition": "B가 최고 등급",
+        "max_score": 4,
+        "reason": "당사자 발표는 유리한 결과만 선택적으로 공개했을 수 있음"
+      },
+      {
+        "condition": "C가 최고 등급",
+        "max_score": 3,
+        "reason": "실제 환경의 병목(데이터 전송, 발열, 스케줄링)이 반영되지 않음"
+      },
+      {
+        "condition": "D만 있음",
+        "max_score": 3,
+        "reason": "수치 과장·맥락 누락 위험"
+      }
+    ],
+    "floor": "대칭 하한: 부정 근거가 C·D등급뿐이면 최저 2점 (1점은 A·B등급 부정 근거가 있을 때만). 긍정 쪽 상한과 같은 기준을 부정 쪽에도 적용해 편향을 막기 위함.",
+    "na_definition": "pro·con 쿼리를 모두 실행했는데 관련 근거가 0건. 점수가 아니며, 보고서에 '공개 근거 없음(정보 공백)'으로 표기하고 상충 후보 추출에서 제외",
+    "score_1_definition": "해당 관점에서 부정적인 근거(A·B등급)가 존재",
+    "intra_conflict": "한 항목 안에서 B등급 이상 근거가 반대 방향이면 높은 등급을 우선. 같은 등급이면 조건을 비교해 3점(조건부) + intra_conflict=true",
+    "no_aggregation": "에이전트 간·항목 간 점수 합산, 기술 간 총점·순위 산출 금지"
+  },
+  "agents": {
+    "trl": {
+      "title": "📐 TRL 평가 에이전트",
+      "scale": "차원 점수 1~5는 서열 척도(1 = 가장 낮은 단계의 근거만 존재, 부정 근거라는 뜻이 아님). 차원 점수를 TRL 매핑 규칙에 넣어 apply_rules(코드)가 TRL 1~9와 확신도를 산출",
+      "judge_addon": "차원 점수는 서열 척도다. 등급 상한·하한은 적용하지 않고 confidence에 반영한다. TRL-1~5 차원 점수만 채점한다. TRL 단계·확신도·gate_trace는 apply_rules(코드)가 trl_mapping 규칙으로 산출하므로 직접 판정하지 않는다. 각 차원 rationale에는 바로 위 점수를 주지 않은 이유를 적어 게이트 추적에 쓸 수 있게 한다. '기법 TRL'과 '기반 부품 성숙도(TRL-5)'를 구분해 서술한다.",
+      "criteria": [
+        "TRL-1",
+        "TRL-2",
+        "TRL-3",
+        "TRL-4",
+        "TRL-5"
+      ]
+    },
+    "market": {
+      "title": "📊 시장성 평가 에이전트",
+      "scale": "1~5 + NA",
+      "judge_addon": "시장 수치는 조사 기관·기준 연도·목표 시장 정의와 함께 적는다. 상위 시장(AI 반도체 전체 등) 수치를 목표 시장 수치로 쓰지 않는다. 개인 사용기는 채택 사례로 세지 않는다(이해관계자 에이전트 담당).",
+      "criteria": [
+        "MKT-1",
+        "MKT-2",
+        "MKT-3",
+        "MKT-4"
+      ]
+    },
+    "stakeholder": {
+      "title": "🤝 이해관계자 평가 에이전트",
+      "scale": "1~5 + NA",
+      "judge_addon": "근거마다 claim 앞에 발언 주체 유형([경쟁사] [도입 기업] [개발자] [애널리스트] [미디어])과 이해당사자 여부를 표기한다. 주가 변동은 기술 품질의 근거가 아니라 '파급력 인식'의 근거로만 쓴다.",
+      "criteria": [
+        "STK-1",
+        "STK-2",
+        "STK-3",
+        "STK-4"
+      ]
+    },
+    "domain": {
+      "title": "🏭 도메인 평가 에이전트 (데이터센터)",
+      "scale": "1~5 + NA",
+      "judge_addon": "평가 주체는 데이터센터 운영자다. 모든 수치에 조건(모델 크기, 문맥 길이, 배치, 평상/폭주 부하, 설정)을 붙인다. 논문의 검증 범위와 운영 조건(128K~1M 문맥, 다양한 태스크)이 다르면 rationale에 '검증 범위 밖'을 명시한다. DOM-1~4는 서비스 결과 지표, DOM-5는 도입 제약 지표다. DOM-3은 같은 GPU 수 기준으로 보고 추가 장비의 비용·전력은 DOM-1·2에 반영한다.",
+      "criteria": [
+        "DOM-1",
+        "DOM-2",
+        "DOM-3",
+        "DOM-4",
+        "DOM-5"
+      ]
+    }
+  },
+  "criteria": [
+    {
+      "id": "TRL-1",
+      "agent": "trl",
+      "name": "검증 환경 수준",
+      "question": "핵심 성능 주장은 어느 수준의 환경에서 검증되었는가?",
+      "why": "운영자는 시뮬레이션 수치와 실측 수치를 같은 무게로 믿을 수 없으므로, 검증 환경이 투자 판단의 신뢰도를 정한다.",
+      "evidence_sources": [
+        "RAG: 논문의 평가 방법론·실험 환경 섹션",
+        "웹: 공식 기술 블로그, 제품 문서, 배포 발표"
+      ],
+      "queries": {
+        "pro": "{tech} real hardware measurement deployment results",
+        "con": "{tech} simulation only not validated on real hardware"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "핵심 주장 수치가 실제 운영 환경(프로덕션 트래픽)에서 측정·공개됨",
+          "example": "운영 서비스에 적용한 뒤 측정한 지표를 공식 발표"
+        },
+        "4": {
+          "criterion": "시제품(FPGA·실제 부품) 또는 실제 서빙 엔진에 통합해, 실제 모델·요청 조건에서 측정",
+          "example": "FPGA 프로토타입 측정, 서빙 엔진 통합 후 부하 테스트"
+        },
+        "3": {
+          "criterion": "실제 하드웨어에서 구성요소 단위로 실측 (표준 벤치마크)",
+          "example": "GPU 1대에서 표준 벤치마크 실측"
+        },
+        "2": {
+          "criterion": "시뮬레이터·분석 모델로만 검증",
+          "example": "사이클 단위 시뮬레이터, 합성 기반 전력 모델"
+        },
+        "1": {
+          "criterion": "개념·이론 제시만 있고 정량 검증 없음",
+          "example": "알고리즘 제안과 이론적 오차 분석만 제시"
+        },
+        "NA": {
+          "criterion": "검증 방식을 확인할 수 있는 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "서열 척도: 등급 상한·하한 미적용, 근거 등급은 confidence에 반영",
+      "pitfalls": [
+        "논문의 여러 실험 중 가장 높은 수준만 보고 판정 → 핵심 주장 수치가 나온 환경을 기준으로 판정",
+        "기반 부품(메모리 모듈·GPU)이 상용인 것을 기법 자체의 검증으로 착각 → TRL-5에서 따로 평가"
+      ]
+    },
+    {
+      "id": "TRL-2",
+      "agent": "trl",
+      "name": "제3자 재현·검증",
+      "question": "개발 주체가 아닌 제3자가 핵심 주장을 재현·검증했는가?",
+      "why": "운영자는 개발 주체의 주장만으로 투자·배포를 결정하지 않는다.",
+      "evidence_sources": [
+        "웹: 독립 벤치마크, 재현 논문, 오픈소스 구현과 이슈 트래커",
+        "RAG: 코드·아티팩트 공개 여부"
+      ],
+      "queries": {
+        "pro": "{tech} independent reproduction benchmark results",
+        "con": "{tech} failed to reproduce independent evaluation accuracy drop"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "독립 주체 2곳 이상이 실측으로 재현했고, 주장한 조건에서 핵심 수치가 대체로 확인됨",
+          "example": "서로 다른 기관 2곳의 재현 보고서"
+        },
+        "4": {
+          "criterion": "독립 주체 1곳이 실측 재현을 확인, 또는 2곳 이상이 재현했지만 일부 조건에서 차이",
+          "example": "서빙 엔진 팀의 독립 평가 블로그"
+        },
+        "3": {
+          "criterion": "오픈소스·커뮤니티 구현이 있고 소규모 재현 결과가 공유됨 (정식 벤치마크 없음)",
+          "example": "커뮤니티 구현 저장소의 벤치마크 표"
+        },
+        "2": {
+          "criterion": "코드·아티팩트만 공개되고 재현 결과는 없음",
+          "example": "공식 코드 저장소만 존재"
+        },
+        "1": {
+          "criterion": "독립 재현에서 주장한 조건 그대로 핵심 수치가 재현되지 않음",
+          "example": "같은 모델·설정에서 주장 수치 미달 보고"
+        },
+        "NA": {
+          "criterion": "코드 비공개이고 재현 시도 근거도 없음",
+          "example": "—"
+        }
+      },
+      "caps": "서열 척도: 등급 상한·하한 미적용, 근거 등급은 confidence에 반영",
+      "pitfalls": [
+        "논문이 검증하지 않은 조건(더 긴 문맥, 더 큰 모델)에서의 하락을 '재현 실패'로 판정 → 적용 범위 한계이므로 DOM-4에서 반영",
+        "커뮤니티 구현 수가 많다고 4점 이상 부여 → '독립 주체의 실측' 여부로만 판정"
+      ]
+    },
+    {
+      "id": "TRL-3",
+      "agent": "trl",
+      "name": "시스템 통합 수준",
+      "question": "실제 추론 스택(서빙 엔진·서버 플랫폼)에 어느 깊이까지 통합되었는가?",
+      "why": "운영자가 쓸 수 있는 형태로 패키징되어야 배포할 수 있다.",
+      "evidence_sources": [
+        "웹: 공식 문서, 릴리스 노트, 풀 리퀘스트",
+        "RAG: 논문의 구현 방식"
+      ],
+      "queries": {
+        "pro": "{tech} integrated official release serving engine support",
+        "con": "{tech} experimental unsupported integration limitations"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "둘 이상의 공식 스택(서빙 엔진, 클라우드 서비스, HW 벤더 플랫폼)에서 기본 기능으로 지원",
+          "example": "두 서빙 엔진의 공식 문서에 기능 명시"
+        },
+        "4": {
+          "criterion": "하나의 공식 스택 정식 릴리스에 기능으로 포함되고 문서화됨",
+          "example": "공식 릴리스 노트·문서에 사용법 수록"
+        },
+        "3": {
+          "criterion": "공식 스택에 실험적으로 통합 (실험 플래그, 병합 전 PR, 포크)",
+          "example": "WIP 상태의 풀 리퀘스트"
+        },
+        "2": {
+          "criterion": "논문용 연구 프로토타입에만 통합",
+          "example": "논문 저자의 연구용 코드"
+        },
+        "1": {
+          "criterion": "통합이 중단·거절되었다는 공식 기록",
+          "example": "병합 거절, 지원 중단 공지"
+        },
+        "NA": {
+          "criterion": "통합 여부를 확인할 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "서열 척도: 등급 상한·하한 미적용, 근거 등급은 confidence에 반영",
+      "pitfalls": [
+        "비공식 포크를 공식 통합으로 계산 → 프로젝트 메인테이너·벤더가 주체인지 확인",
+        "지원 모델·설정 제약(특정 구조 미지원 등)을 누락 → rationale에 제약 조건 기록"
+      ]
+    },
+    {
+      "id": "TRL-4",
+      "agent": "trl",
+      "name": "상용화 공시",
+      "question": "제품화·상용 배포에 관한 공식 공시가 있는가?",
+      "why": "TRL 7~9는 공식 공시로만 확인할 수 있다.",
+      "evidence_sources": [
+        "웹: 보도자료, IR 자료, 제품 페이지"
+      ],
+      "queries": {
+        "pro": "{tech} product launch customer deployment announcement",
+        "con": "{tech} research only no commercial plans discontinued"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "상용 제품·서비스로 판매·운영 중이라는 공식 공시와 고객 사례",
+          "example": "제품 출시 보도자료와 고객 도입 발표"
+        },
+        "4": {
+          "criterion": "고객 샘플 공급 또는 파일럿 도입 공식 발표",
+          "example": "고객사 샘플 공급 발표"
+        },
+        "3": {
+          "criterion": "출시 시점이 명시된 공식 로드맵",
+          "example": "'내년 상반기 출시' 공식 발표"
+        },
+        "2": {
+          "criterion": "연구 성과 발표(논문, 학회 데모)만 있고 제품화 언급 없음",
+          "example": "학회 발표만 존재"
+        },
+        "1": {
+          "criterion": "제품화 중단·철회 공식 확인",
+          "example": "사업 철수 발표"
+        },
+        "NA": {
+          "criterion": "제품화 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "서열 척도: 등급 상한·하한 미적용, 근거 등급은 confidence에 반영",
+      "pitfalls": [
+        "기반 부품의 제품 출시를 해당 기법의 상용화로 계산 → TRL-5로 분리",
+        "'내부적으로 쓰고 있을 것' 같은 추측을 근거로 사용 → 공식 공시만 인정"
+      ]
+    },
+    {
+      "id": "TRL-5",
+      "agent": "trl",
+      "name": "기반 부품 성숙도",
+      "question": "이 기술을 구현하는 데 필요한 기반 하드웨어·소프트웨어를 상용으로 구할 수 있는가?",
+      "why": "기법이 성숙해도 기반 부품이 없으면 데이터센터에 배포할 수 없다.",
+      "evidence_sources": [
+        "RAG: 논문의 요구 HW·SW와 전제 조건",
+        "웹: 부품 제품 페이지, 표준 사양"
+      ],
+      "queries": {
+        "pro": "{tech} required hardware commercially available",
+        "con": "{tech} requires custom hardware not yet available"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "필요한 기반 HW·SW가 모두 상용 판매·배포 중",
+          "example": "범용 GPU와 공개 서빙 엔진만 필요"
+        },
+        "4": {
+          "criterion": "대부분 상용이고 일부가 샘플·초기 출하 단계",
+          "example": "핵심 모듈 1종이 고객 샘플 단계"
+        },
+        "3": {
+          "criterion": "핵심 기반 부품 1개 이상이 시제품·발표 단계",
+          "example": "학회에서 시제품만 공개"
+        },
+        "2": {
+          "criterion": "핵심 기반 부품이 연구·설계 단계",
+          "example": "논문 속 설계안만 존재"
+        },
+        "1": {
+          "criterion": "핵심 기반 부품의 개발 중단이 공식 확인됨",
+          "example": "부품 개발 중단 발표"
+        },
+        "NA": {
+          "criterion": "요구 부품을 확인할 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "서열 척도: 등급 상한·하한 미적용, 근거 등급은 confidence에 반영",
+      "pitfalls": [
+        "이 차원을 기법 자체의 성숙도로 해석 → 보고서에 '기법 TRL'과 '기반 부품 성숙도'를 분리 표기"
+      ]
+    },
+    {
+      "id": "MKT-1",
+      "agent": "market",
+      "name": "목표 시장 규모·성장성",
+      "question": "이 기술이 겨냥하는 목표 시장의 규모와 성장세가 공개 자료로 확인되는가?",
+      "why": "운영자와 공급자 모두 투자 회수 가능성을 목표 시장 규모로 판단한다.",
+      "evidence_sources": [
+        "웹: 시장조사 기관 발표, 산업 뉴스, 기업 IR"
+      ],
+      "queries": {
+        "pro": "{category} market size CAGR datacenter AI inference",
+        "con": "{category} market slowdown limited demand niche"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "독립 시장조사 기관 2곳 이상이 목표 시장 규모와 연평균 성장률(CAGR) 20% 이상을 제시",
+          "example": "조사 기관 두 곳의 시장 전망 수치"
+        },
+        "4": {
+          "criterion": "독립 기관 1곳이 CAGR 20% 이상을 제시, 또는 2곳 이상이지만 CAGR 10~20%",
+          "example": "조사 기관 한 곳의 전망 수치"
+        },
+        "3": {
+          "criterion": "정량 수치 없이 기업 발표·보도로 성장이 언급되거나, CAGR 10% 미만",
+          "example": "'수요가 빠르게 늘고 있다'는 기업 발표"
+        },
+        "2": {
+          "criterion": "목표 시장이 틈새(주요 사업자 소수)라는 분석, 또는 성장 둔화 전망",
+          "example": "특정 초대형 사업자 외 수요가 제한적이라는 분석"
+        },
+        "1": {
+          "criterion": "목표 수요가 대체 수단으로 줄어든다는 정량 전망이 1차 자료로 존재",
+          "example": "대체 기술 확산으로 시장 축소를 예측한 리포트"
+        },
+        "NA": {
+          "criterion": "목표 시장 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "상위 시장(AI 반도체 전체, 데이터센터 전체) 수치를 목표 시장 수치로 사용 → 목표 시장 정의를 먼저 적고 조사 기관·기준 연도 기록"
+      ]
+    },
+    {
+      "id": "MKT-2",
+      "agent": "market",
+      "name": "상용화·채택 현황",
+      "question": "데이터센터 추론 환경에서 실제 채택 사례가 공개되어 있는가?",
+      "why": "채택 사례는 운영자가 직접 검증할 수 있는 가장 강한 시장 신호다.",
+      "evidence_sources": [
+        "웹: 고객 사례, 기업 기술 블로그, 보도자료"
+      ],
+      "queries": {
+        "pro": "{tech} production deployment case study inference",
+        "con": "{tech} not adopted production concerns rollback"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "서로 다른 조직 3곳 이상의 프로덕션 도입 사례가 공개됨 (1곳 이상은 개발 주체 외)",
+          "example": "여러 기업의 운영 적용 기술 블로그"
+        },
+        "4": {
+          "criterion": "프로덕션 도입 1~2곳, 또는 파일럿·PoC 3곳 이상",
+          "example": "한 기업의 운영 적용 발표"
+        },
+        "3": {
+          "criterion": "파일럿·PoC 1~2곳, 또는 비프로덕션 오픈소스 사용 사례만",
+          "example": "PoC 결과 공유"
+        },
+        "2": {
+          "criterion": "개발 주체의 데모·발표만 있고 외부 채택 사례 없음",
+          "example": "개발사 데모 영상만 존재"
+        },
+        "1": {
+          "criterion": "도입 후 철회·보류된 사례가 공개됨",
+          "example": "운영 적용 후 롤백 공지"
+        },
+        "NA": {
+          "criterion": "채택 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "저장소 스타·다운로드 수를 채택으로 계산 → 조직 단위 사례만 셈",
+        "개인 개발자의 사용기를 채택 사례로 계산 → STK-2에서 평가"
+      ]
+    },
+    {
+      "id": "MKT-3",
+      "agent": "market",
+      "name": "생태계 지지의 폭",
+      "question": "이 기술을 지원·지지하는 주체가 얼마나 다양한 유형에 걸쳐 있는가?",
+      "why": "지지 주체가 다양할수록 운영자는 특정 벤더에 묶이지 않고 도입할 수 있다.",
+      "evidence_sources": [
+        "웹: 프레임워크 문서, 벤더 발표, 표준화 단체 자료"
+      ],
+      "queries": {
+        "pro": "{tech} support ecosystem vendors frameworks standard",
+        "con": "{tech} lack of support vendor lock-in competing standard"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "유형 4개(① 서빙 프레임워크 ② HW·칩 벤더 ③ 클라우드·데이터센터 사업자 ④ 표준화 단체) 중 3개 이상이 공식 지지",
+          "example": "프레임워크·칩 벤더·클라우드가 각각 지원 발표"
+        },
+        "4": {
+          "criterion": "2개 유형이 공식 지지",
+          "example": "프레임워크와 칩 벤더가 지원"
+        },
+        "3": {
+          "criterion": "1개 유형이 공식 지지, 또는 커뮤니티 구현이 다수",
+          "example": "한 프레임워크만 지원"
+        },
+        "2": {
+          "criterion": "개발 주체 단독이고 외부 지지 없음",
+          "example": "개발사 코드만 존재"
+        },
+        "1": {
+          "criterion": "주요 생태계 주체가 공식적으로 미지원을 밝히거나 경쟁 표준을 채택",
+          "example": "주요 벤더의 지원 불가 공지"
+        },
+        "NA": {
+          "criterion": "생태계 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "TRL-3(통합 깊이)과 혼동 → 여기서는 '지지 주체 유형의 수'만 셈",
+        "기술이 속한 범주 전체(예: 해당 메모리 규격)에 대한 지지와 이 기술 자체에 대한 지지를 섞음 → rationale에 구분 표기"
+      ]
+    },
+    {
+      "id": "MKT-4",
+      "agent": "market",
+      "name": "향후 경쟁력 신호",
+      "question": "향후 이 기술을 데이터센터에 적용하는 것이 경쟁력이 있다는 신호가 현재 관찰되는가?",
+      "why": "운영자는 2~3년 이상 쓸 기술을 고르므로 지속성이 중요하다.",
+      "evidence_sources": [
+        "웹: 공식 로드맵, 후속 제품·버전 발표, 대체 기술 비교 분석"
+      ],
+      "queries": {
+        "pro": "{tech} roadmap next generation future datacenter",
+        "con": "{tech} alternative outperforms replaced by"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "개발 주체 외 2곳 이상이 향후 12~24개월 제품·서비스 로드맵에 공식 포함하고, 대체 수단 대비 차별점이 독립 자료로 제시됨",
+          "example": "여러 벤더 로드맵에 포함 + 독립 비교 분석"
+        },
+        "4": {
+          "criterion": "개발 주체 외 1곳의 공식 로드맵 포함, 또는 개발 주체의 시점 명시 로드맵",
+          "example": "한 벤더의 차기 제품 계획 발표"
+        },
+        "3": {
+          "criterion": "후속 연구·버전 발표는 이어지지만 제품 로드맵은 없음",
+          "example": "후속 논문 발표"
+        },
+        "2": {
+          "criterion": "최근 12개월 신규 발표 없음, 또는 대체 수단이 같은 문제를 더 넓게 해결한다는 독립 분석",
+          "example": "활동 정체, 대체 기술 우위 분석"
+        },
+        "1": {
+          "criterion": "개발 주체의 중단·방향 전환 발표, 또는 수요가 대체 수단으로 이동했다는 1차 자료",
+          "example": "개발 중단 공지"
+        },
+        "NA": {
+          "criterion": "미래 계획 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "'5년 뒤 주류가 될 것' 같은 예측 문장만으로 4점 이상 부여 → 로드맵·후속 발표 같은 관찰 가능한 신호만 인정",
+        "애널리스트 전망을 여기서 채점 → STK-4에서 평가"
+      ]
+    },
+    {
+      "id": "STK-1",
+      "agent": "stakeholder",
+      "name": "경쟁 진영의 인식·대응",
+      "question": "대체 접근을 추진하는 경쟁 진영은 이 기술을 어떻게 인식하고 대응하는가?",
+      "why": "경쟁 진영의 대응은 기술의 영향력과 향후 표준 경쟁 구도를 보여준다.",
+      "evidence_sources": [
+        "웹: 경쟁사 발표·인터뷰, 경쟁 기술 논문의 비교 실험"
+      ],
+      "queries": {
+        "pro": "{tech} competitor response compatible adopts",
+        "con": "{tech} competitor criticism limitations comparison"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "경쟁 진영이 이 기술을 채택·호환 지원하거나 자사 제품에 수용",
+          "example": "경쟁사 제품에 호환 기능 탑재"
+        },
+        "4": {
+          "criterion": "경쟁 진영이 영향력을 공개적으로 인정하고 대응 제품·기술을 발표",
+          "example": "경쟁사가 대응 기술 발표에서 직접 언급"
+        },
+        "3": {
+          "criterion": "경쟁 진영 자료에서 중립적인 비교 대상으로 언급",
+          "example": "경쟁 논문의 비교 실험에 포함"
+        },
+        "2": {
+          "criterion": "경쟁 진영이 한계를 주장하지만 1차 근거는 제시하지 않음",
+          "example": "경쟁사 임원의 인터뷰 발언"
+        },
+        "1": {
+          "criterion": "경쟁 진영이 1차 근거(실측·벤치마크)로 한계를 입증",
+          "example": "경쟁사의 비교 벤치마크 결과 공개"
+        },
+        "NA": {
+          "criterion": "경쟁 진영의 반응 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "경쟁사의 자사 홍보성 비판을 사실로 수용 → 이해당사자 발언은 최대 B등급, 반대 측 근거를 함께 적음"
+      ]
+    },
+    {
+      "id": "STK-2",
+      "agent": "stakeholder",
+      "name": "도입자·개발자 평가",
+      "question": "실제 사용자(도입 기업 엔지니어, 개발자)는 이 기술을 어떻게 평가하는가?",
+      "why": "운영 현장의 사용 경험은 논문 수치가 실제로 재현되는지 보여준다.",
+      "evidence_sources": [
+        "웹: 이슈 트래커·토론 게시판, 기술 블로그, 컨퍼런스 발표"
+      ],
+      "queries": {
+        "pro": "{tech} user experience results benchmark",
+        "con": "{tech} issues bug quality degradation users"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "서로 다른 사용자 3곳 이상이 정량 결과와 함께 긍정 평가, 중대한 부정 보고 없음",
+          "example": "여러 팀의 벤치마크 포함 사용기"
+        },
+        "4": {
+          "criterion": "긍정 우세(긍정:부정 2:1 이상), 정량 결과 1건 이상",
+          "example": "긍정 사용기 다수, 경미한 버그 보고"
+        },
+        "3": {
+          "criterion": "긍정·부정이 섞여 있거나, '특정 설정에서만 좋다'는 조건부 긍정",
+          "example": "'4비트는 괜찮고 3비트는 품질 저하'"
+        },
+        "2": {
+          "criterion": "부정 우세 (품질 저하·버그·속도 저하 보고가 긍정보다 많음)",
+          "example": "품질 저하 이슈가 다수"
+        },
+        "1": {
+          "criterion": "공식 채널(메인테이너·문서)이 사용을 권장하지 않거나, 다수 사용자가 실사용 부적합이라 결론",
+          "example": "문서에 '운영 환경 비권장' 명시"
+        },
+        "NA": {
+          "criterion": "사용자 평가 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "같은 작성자의 글을 여러 건으로 계산 → 작성자 단위로 셈",
+        "사용자가 1~2명뿐인데 4점 이상 부여 → 5점은 3곳 이상 필요"
+      ]
+    },
+    {
+      "id": "STK-3",
+      "agent": "stakeholder",
+      "name": "채택 장벽 인식",
+      "question": "도입 기업·운영자가 공개적으로 지적하는 채택 장벽은 얼마나 심각한가? (장벽이 낮을수록 높은 점수)",
+      "why": "장벽에 대한 인식은 기술적 사실과 별개로 도입 의사결정을 늦춘다.",
+      "evidence_sources": [
+        "웹: 인터뷰, 설문, 컨퍼런스 패널, 이슈 트래커"
+      ],
+      "queries": {
+        "pro": "{tech} easy to adopt drop-in experience",
+        "con": "{tech} adoption barriers cost complexity vendor lock-in"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "공개된 장벽 지적이 없고, 도입 용이성을 언급한 사용자 발언이 2건 이상",
+          "example": "'설정 한 줄로 적용했다'는 사용기 여러 건"
+        },
+        "4": {
+          "criterion": "경미한 장벽(설정·튜닝)만 지적됨",
+          "example": "'파라미터 튜닝이 필요하다'"
+        },
+        "3": {
+          "criterion": "중간 장벽(특정 모델·HW 제약, 운영 절차 변경)이 지적됨",
+          "example": "'일부 모델 구조는 지원 안 됨'"
+        },
+        "2": {
+          "criterion": "큰 장벽(인프라 교체, 벤더 종속, 비용)이 2곳 이상에서 지적됨",
+          "example": "'새 서버를 사야 한다'는 운영자 발언 다수"
+        },
+        "1": {
+          "criterion": "장벽 때문에 도입을 보류·포기했다는 공개 발언",
+          "example": "'비용 때문에 도입을 접었다'"
+        },
+        "NA": {
+          "criterion": "장벽 관련 발언 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "기술 사양서만 보고 장벽을 판정 → 여기서는 사람들의 발언만 근거로 삼고, 사양 기반 판단은 DOM-5에서"
+      ]
+    },
+    {
+      "id": "STK-4",
+      "agent": "stakeholder",
+      "name": "투자·애널리스트·미디어 시각",
+      "question": "투자업계·애널리스트·미디어는 이 기술의 파급력을 어떻게 평가하는가?",
+      "why": "투자업계의 시각은 공급망(메모리·GPU 벤더)의 투자 방향과 운영자의 조달 환경에 영향을 준다.",
+      "evidence_sources": [
+        "웹: 증권사 리포트 요약, 경제지, 투자·M&A 발표"
+      ],
+      "queries": {
+        "pro": "{tech} analyst outlook investment impact",
+        "con": "{tech} analyst skeptical overhyped limited impact"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "애널리스트 2곳 이상이 근거와 함께 긍정 평가하고, 관련 투자·M&A 공식 발표가 있음",
+          "example": "증권사 리포트 2건 + 관련 투자 발표"
+        },
+        "4": {
+          "criterion": "애널리스트 1곳 이상이 긍정 평가하고 부정 평가는 없음",
+          "example": "증권사 리포트 1건"
+        },
+        "3": {
+          "criterion": "긍정·부정이 섞여 있거나, 애널리스트 분석 없이 미디어 보도만 있음",
+          "example": "보도는 많지만 분석 리포트 없음"
+        },
+        "2": {
+          "criterion": "애널리스트 다수가 '효과가 과장됐거나 제한적'이라고 평가",
+          "example": "'병목은 풀지만 수요는 줄지 않는다'는 분석 다수"
+        },
+        "1": {
+          "criterion": "근거를 제시한 부정 평가가 우세하고, 투자 철회·축소 발표가 있음",
+          "example": "투자 축소 공시"
+        },
+        "NA": {
+          "criterion": "투자·애널리스트 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "관련 기업 주가 변동을 기술 품질의 근거로 사용 → '파급력 인식'의 근거로만 쓰고 rationale에 해석을 명시",
+        "헤드라인 수치(N배, 무손실)를 원문 확인 없이 인용 → D등급 처리"
+      ]
+    },
+    {
+      "id": "DOM-1",
+      "agent": "domain",
+      "name": "토큰당 비용(TCO)",
+      "question": "도입 시 토큰당 총소유비용(도입비·운영비 포함)이 개선된다는 정량 근거가 있는가?",
+      "why": "데이터센터 추론 사업의 수익성은 토큰당 비용으로 결정된다.",
+      "evidence_sources": [
+        "RAG: 논문의 비용 효율(tokens/$) 분석",
+        "웹: 독립 벤치마크, 운영사 비용 사례, 부품 가격 자료"
+      ],
+      "queries": {
+        "pro": "{tech} cost per token reduction TCO inference",
+        "con": "{tech} additional cost overhead TCO increase"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "독립 실측으로 토큰당 비용 30% 이상 개선, 도입비(CapEx)까지 포함해 계산",
+          "example": "제3자 운영 사례에서 도입비 포함 비용 효율 1.4배"
+        },
+        "4": {
+          "criterion": "토큰당 비용 30% 이상 개선이 실측됐지만 도입비는 빠짐, 또는 개발 주체의 실측만 있음",
+          "example": "개발사 실측 기반 비용 절감 발표"
+        },
+        "3": {
+          "criterion": "개선 폭 10~30%, 또는 정량 수치 없이 개선 방향만 확인",
+          "example": "'메모리가 줄어 동시 세션이 늘면 비용이 개선될 것'"
+        },
+        "2": {
+          "criterion": "절감 효과가 추가 비용(전용 HW, 처리량 저하에 따른 GPU 증설)으로 상쇄된다는 근거",
+          "example": "처리량 저하로 같은 트래픽에 GPU 추가 필요"
+        },
+        "1": {
+          "criterion": "도입 후 토큰당 총비용이 늘었다는 실측",
+          "example": "도입 전후 비교에서 비용 효율 감소"
+        },
+        "NA": {
+          "criterion": "비용 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "메모리 절감률을 그대로 비용 절감률로 환산 → 처리량 변화와 추가 HW 비용 반영 여부 확인",
+        "시뮬레이션 기반 비용 모델을 실측처럼 취급 → C등급, 최대 3점"
+      ]
+    },
+    {
+      "id": "DOM-2",
+      "agent": "domain",
+      "name": "전력 효율",
+      "question": "토큰당 에너지(또는 전력당 처리량)가 개선되는가?",
+      "why": "전력은 데이터센터 증설의 핵심 제약이므로, 전력당 처리량이 증설 가능 규모를 정한다.",
+      "evidence_sources": [
+        "RAG: 논문의 에너지·전력 분석",
+        "웹: 독립 측정, 벤더 사양"
+      ],
+      "queries": {
+        "pro": "{tech} energy per token efficiency power savings",
+        "con": "{tech} power overhead energy consumption increase"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "독립 실측으로 시스템(서버·랙) 단위 토큰당 에너지 30% 이상 개선",
+          "example": "제3자의 랙 단위 전력 측정"
+        },
+        "4": {
+          "criterion": "30% 이상 개선이 장치 단위로만 측정됐거나 개발 주체 실측만 있음",
+          "example": "개발사의 장치 단위 전력 측정"
+        },
+        "3": {
+          "criterion": "개선 폭 10~30%, 또는 메모리 트래픽 감소 같은 간접 근거로만 개선을 추정",
+          "example": "'데이터 이동이 줄어 전력이 줄 것'"
+        },
+        "2": {
+          "criterion": "추가 장치·연산의 전력으로 절감분이 상쇄된다는 근거",
+          "example": "역양자화 연산·추가 모듈 전력으로 상쇄"
+        },
+        "1": {
+          "criterion": "토큰당 에너지가 늘었다는 실측",
+          "example": "도입 후 전력 효율 저하 보고"
+        },
+        "NA": {
+          "criterion": "전력 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "장치 단위 전력과 시스템 단위 전력을 혼동 → 측정 단위를 claim에 표기",
+        "시뮬레이션 전력 모델을 실측처럼 취급 → C등급, 최대 3점"
+      ]
+    },
+    {
+      "id": "DOM-3",
+      "agent": "domain",
+      "name": "처리량·동시 세션",
+      "question": "같은 GPU 수 기준으로 처리량이나 동시 세션 수가 늘고, 지연 목표(SLO)를 지키는가? (추가 장비의 비용·전력은 DOM-1·2에서 반영)",
+      "why": "장문맥 요청이 늘수록 KV cache가 GPU 메모리를 차지해, 동시 세션 수가 곧 수익을 좌우한다.",
+      "evidence_sources": [
+        "RAG: 논문의 처리량·배치 실험",
+        "웹: 독립 서빙 벤치마크"
+      ],
+      "queries": {
+        "pro": "{tech} throughput improvement concurrent requests serving benchmark",
+        "con": "{tech} throughput slowdown latency overhead"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "실측으로 처리량과 동시 세션이 모두 1.5배 이상 개선되고 지연 SLO 유지",
+          "example": "부하 테스트에서 둘 다 1.5배 이상, 지연 유지"
+        },
+        "4": {
+          "criterion": "둘 중 하나만 1.5배 이상 개선, 또는 둘 다 1.2~1.5배 개선 (지연 유지)",
+          "example": "동시 세션 2배, 처리량 동일"
+        },
+        "3": {
+          "criterion": "특정 부하(메모리 부족 구간, 초장문맥)에서만 개선되고 평상 부하에서는 중립",
+          "example": "폭주 부하에서만 첫 토큰 지연 개선"
+        },
+        "2": {
+          "criterion": "동시 세션은 늘지만 처리량이나 지연이 나빠지는 트레이드오프",
+          "example": "동시 세션 증가, 처리량 20~30% 감소"
+        },
+        "1": {
+          "criterion": "처리량과 지연이 모두 나빠졌다는 실측",
+          "example": "모든 부하 조건에서 느려짐"
+        },
+        "NA": {
+          "criterion": "처리량 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "최대치(peak) 수치만 인용 → 부하 조건(평상/폭주, 문맥 길이, 배치 크기)별로 기록",
+        "조건 없는 'N배' 수치를 그대로 사용 → D등급 처리"
+      ]
+    },
+    {
+      "id": "DOM-4",
+      "agent": "domain",
+      "name": "품질 보장(SLA)",
+      "question": "데이터센터 서비스가 요구하는 다양한 태스크·긴 문맥 조건에서 정확도가 유지되는가?",
+      "why": "운영자는 특정 벤치마크가 아니라 고객의 모든 요청 유형에 대해 품질을 보장해야 한다.",
+      "evidence_sources": [
+        "RAG: 논문의 정확도 실험 (벤치마크, 문맥 길이, 설정)",
+        "웹: 독립 평가"
+      ],
+      "queries": {
+        "pro": "{tech} accuracy preserved long context benchmark",
+        "con": "{tech} accuracy degradation reasoning long context"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "검색·요약·추론·코드 중 3개 이상 태스크 유형과 128K 이상 문맥에서 기준 대비 하락 1%p 이내 (독립 검증), 또는 기준 연산과 수학적으로 같음이 입증·검증됨",
+          "example": "독립 평가에서 여러 태스크·긴 문맥 모두 기준과 동등"
+        },
+        "4": {
+          "criterion": "3개 이상 태스크 유형에서 1%p 이내이지만 128K 이상은 미검증, 또는 개발 주체 검증만 있음",
+          "example": "논문 내 여러 벤치마크에서 동등"
+        },
+        "3": {
+          "criterion": "일부 태스크·설정에서만 유지되고 다른 유형에서는 1~5%p 하락 (설정 조건부)",
+          "example": "검색은 유지, 요약에서 소폭 하락"
+        },
+        "2": {
+          "criterion": "주요 태스크 유형 1개 이상에서 5%p 넘게 하락",
+          "example": "추론 과제에서 큰 폭 하락"
+        },
+        "1": {
+          "criterion": "여러 태스크 유형에서 5%p 넘게 하락하거나 출력 붕괴 보고",
+          "example": "여러 과제에서 출력 붕괴"
+        },
+        "NA": {
+          "criterion": "정확도 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "검색형(NIAH) 결과만으로 5점 부여 → 태스크 유형 수 확인",
+        "설정(비트폭, 선택 비율)별 결과를 섞어서 판정 → 설정별로 분리 기록",
+        "논문 검증 범위 밖의 하락을 TRL-2 '재현 실패'로 처리 → 이 항목에서 반영"
+      ]
+    },
+    {
+      "id": "DOM-5",
+      "agent": "domain",
+      "name": "기존 인프라 호환성·도입 기간",
+      "question": "기존 GPU 서버·서빙 스택에 얼마나 적은 변경으로, 얼마나 빨리 도입할 수 있는가?",
+      "why": "운영 중인 데이터센터는 다운타임과 교체 비용 때문에 변경 범위가 도입 속도를 결정한다.",
+      "evidence_sources": [
+        "RAG: 논문의 요구 HW·SW와 전제 조건",
+        "웹: 공식 문서(지원 모델·HW), 부품 출시 현황"
+      ],
+      "queries": {
+        "pro": "{tech} drop-in integration no retraining existing infrastructure",
+        "con": "{tech} requires new hardware infrastructure changes"
+      },
+      "rubric": {
+        "5": {
+          "criterion": "설정 변경만으로 적용되고, 재학습·보정이 필요 없으며, 공식 지원 스택이 있음",
+          "example": "서빙 엔진 옵션 한 줄로 적용"
+        },
+        "4": {
+          "criterion": "SW 업데이트·라이브러리 교체 수준이며, 일부 모델·설정 제약이 있음",
+          "example": "라이브러리 교체, 일부 모델 구조 미지원"
+        },
+        "3": {
+          "criterion": "모델 변환·커널 개발, 또는 상용 표준 부품의 추가 장착이 필요 (수개월 단위)",
+          "example": "상용 메모리 모듈 추가 장착"
+        },
+        "2": {
+          "criterion": "전용 HW나 서버 구조 변경이 필요하고, 해당 부품이 아직 상용 출시 전",
+          "example": "시제품 단계 전용 장치 필요"
+        },
+        "1": {
+          "criterion": "필요한 HW가 설계·시뮬레이션 단계에만 있고 대규모 재설계가 필요함이 확인됨",
+          "example": "논문 설계안 외에 실물 없음"
+        },
+        "NA": {
+          "criterion": "도입 요건 관련 공개 자료 없음",
+          "example": "—"
+        }
+      },
+      "caps": "common",
+      "pitfalls": [
+        "변경 범위가 크다는 이유로 다른 항목(전력·처리량) 점수를 깎거나 상쇄 → 이 항목에서만 반영",
+        "사람들의 장벽 발언을 여기서 채점 → STK-3에서 평가"
+      ]
+    }
+  ],
+  "trl_mapping": {
+    "rule": "모든 조건을 만족하는 가장 높은 TRL을 채택. NA 차원은 조건 불충족으로 처리(보수적 하한)",
+    "gates": [
+      {
+        "trl": 1,
+        "condition": "기본값 (근거가 원리 관찰 수준뿐)"
+      },
+      {
+        "trl": 2,
+        "condition": "TRL-1 ≥ 1"
+      },
+      {
+        "trl": 3,
+        "condition": "TRL-1 ≥ 2"
+      },
+      {
+        "trl": 4,
+        "condition": "TRL-1 ≥ 3"
+      },
+      {
+        "trl": 5,
+        "condition": "TRL-1 ≥ 4"
+      },
+      {
+        "trl": 6,
+        "condition": "TRL-1 ≥ 4 AND (TRL-2 ≥ 4 OR TRL-3 ≥ 3)"
+      },
+      {
+        "trl": 7,
+        "condition": "TRL-1 = 5 AND TRL-4 ≥ 4"
+      },
+      {
+        "trl": 8,
+        "condition": "TRL-1 = 5 AND TRL-3 ≥ 4 AND TRL-4 ≥ 4 AND TRL-5 ≥ 4"
+      },
+      {
+        "trl": 9,
+        "condition": "TRL-1 = 5 AND TRL-3 ≥ 4 AND TRL-4 = 5 AND TRL-5 = 5"
+      }
+    ],
+    "confidence": {
+      "high": "게이트 근거에 A등급 1건 이상, 전부 A·B등급, NA 차원 0개",
+      "medium": "high·low가 아닌 경우 (C등급 포함, B등급만, NA 차원 1개)",
+      "low": "게이트 근거에 D등급 포함 또는 NA 차원 2개 이상"
+    },
+    "report_notation": "TRL n (공개 정보 기반 추정, 하한) / 기반 부품 성숙도 m/5"
+  },
+  "comparison_pairs": {
+    "rule": "같은 기술 안에서 두 항목의 점수 차가 2점 이상이면 상충 후보로 추출(자동 판정 아님). 종합 단계에서 두 항목의 근거·조건을 대조해 '관점 간 상충 / 조건 차이 / 근거 부족' 중 하나로 서술. 한쪽이 NA면 '정보 공백'으로 분류(상충 아님). TRL 차원은 1~5 차원 점수로 비교",
+    "pairs": [
+      {
+        "id": "P1",
+        "theme": "품질",
+        "a": "MKT-2",
+        "b": "DOM-4",
+        "interpretation": "채택은 늘고 있는데 운영 품질 기준에는 못 미침 → '시장 기대와 운영 현실의 괴리'"
+      },
+      {
+        "id": "P2",
+        "theme": "비용",
+        "a": "STK-4",
+        "b": "DOM-1",
+        "interpretation": "투자업계는 파급력을 크게 보지만, 토큰당 비용 개선의 실측 근거는 부족"
+      },
+      {
+        "id": "P3",
+        "theme": "성숙도 vs 기대",
+        "a": "TRL-1",
+        "b": "MKT-4",
+        "interpretation": "미래 경쟁력 신호는 강하지만 검증은 시뮬레이션 수준 (또는 그 반대)"
+      },
+      {
+        "id": "P4",
+        "theme": "도입 용이성",
+        "a": "STK-3",
+        "b": "DOM-5",
+        "interpretation": "사양상 도입이 쉬운데 사용자는 장벽을 지적 (또는 그 반대)"
+      },
+      {
+        "id": "P5",
+        "theme": "생태계",
+        "a": "MKT-3",
+        "b": "STK-1",
+        "interpretation": "지지 주체는 다양한데 경쟁 진영이 1차 근거로 한계를 입증"
+      },
+      {
+        "id": "P6",
+        "theme": "성능 체감",
+        "a": "DOM-3",
+        "b": "STK-2",
+        "interpretation": "벤치마크 처리량 수치와 사용자 체감 평가가 엇갈림"
+      }
+    ]
+  },
+  "judge": {
+    "common_prompt": "너는 {agent_title}다. AI 데이터센터 LLM 추론 인프라를 운영하는 사업자의 관점에서, 기술 1건({tech})을 아래 평가 항목별로 채점한다.\n\n[원칙]\n1. 우열 판정 금지: 이 기술만 채점한다. 다른 기술과 비교하거나 순위를 매기지 않는다.\n2. 제공된 근거만 사용: evidence 목록에 없는 사실·수치를 만들지 않는다.\n3. 근거 등급: 근거마다 A(독립 실측·공식 공시) / B(개발 주체·이해당사자 실측·발표) / C(시뮬레이션·추정) / D(원출처 불명 2차 자료, 조건 없는 수치)를 매긴다.\n4. 상한·하한: 최고 등급이 B면 최대 4점, C·D뿐이면 최대 3점. 부정 근거가 C·D뿐이면 최저 2점.\n5. 균형: 긍정(pro)·비판(con) 근거를 모두 검토한다. 한쪽만 있으면 rationale에 \"비판 근거 미확인\"처럼 적는다.\n6. 조건 명시: 수치는 조건(모델, 문맥 길이, 설정, HW)과 함께 인용한다.\n7. N/A: 관련 근거가 0건일 때만 score를 \"NA\"로 한다. 부정 근거가 있으면 N/A가 아니라 점수를 준다.\n8. 루브릭 문구에 가장 가까운 점수를 고르고, 바로 위 점수를 주지 않은 이유를 rationale에 한 문장 넣는다.\n9. 한 항목 안에서 B등급 이상 근거가 서로 반대면 intra_conflict=true로 하고 조건 차이를 설명한다.\n10. confidence: high = A등급 근거 포함 + 긍정·비판 모두 검토 / medium = B등급 중심이거나 한쪽 근거만 / low = C·D등급 중심.\n\n[에이전트 추가 지시]\n{agent_addon}\n\n[평가 항목과 루브릭]\n{criteria_block}\n\n[출력] JSON 배열만 출력한다. 항목당 객체 1개:\n{schema}",
+    "output_schema": {
+      "criterion_id": "DOM-4",
+      "tech": "TurboQuant",
+      "score": "1~5 정수 또는 \"NA\"",
+      "evidence": [
+        {
+          "claim": "주장 요약 (조건 포함)",
+          "source": "URL 또는 논문명 p.N",
+          "date": "YYYY-MM-DD",
+          "grade": "A|B|C|D",
+          "stance": "pro|con"
+        }
+      ],
+      "rationale": "점수 근거 2~3문장 + 바로 위 점수를 주지 않은 이유 1문장",
+      "confidence": "high|medium|low",
+      "cap_applied": "예: 'B 최고 등급 → 최대 4' 또는 null",
+      "intra_conflict": false
+    }
+  }
+}
