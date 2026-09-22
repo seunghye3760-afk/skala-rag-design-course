@@ -20,6 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .. import progress
 from ..config import ROOT, runtime
 from ..graph.state import MainState
 from ..graph.task_schema import ConflictCandidate, TechId
@@ -145,6 +146,8 @@ def _apply(state: MainState, out: _Synthesis) -> dict:
 def synthesize(state: MainState) -> dict:
     if os.getenv("KV_FAKE") == "1":
         return _fake(state)
+    progress.step("synthesize", "관점 간 상충 해석·종합 서술 LLM 호출")
     messages = _build_messages(state)
     out: _Synthesis = _get_llm().invoke(messages)
+    progress.step("synthesize", "완료")
     return _apply(state, out)
