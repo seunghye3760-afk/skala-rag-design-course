@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+from .. import progress
 from ..agents.synthesis import synthesize
 from ..config import output_root, technologies_config
 from ..graph.state import MainState
@@ -250,6 +251,7 @@ def _reference(state: MainState) -> list[str]:
 
 
 def synthesize_report(state: MainState) -> dict:
+    progress.step("synthesize_report", "종합 결과 정리 시작")
     upd = synthesize(state)
     run_dir = output_root() / state.get("run_id", "run")
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -257,6 +259,7 @@ def synthesize_report(state: MainState) -> dict:
     _dump(run_dir / "scores.json", state.get("final_results", []))
     _dump(run_dir / "search_log.json", state.get("search_log", []))
     _dump(run_dir / "info_gaps.json", state.get("info_gaps", []))
+    progress.step("synthesize_report", "보고서 본문 조립 중")
 
     names = _names(state)
     assessment = upd["final_assessment"]
@@ -279,15 +282,16 @@ def synthesize_report(state: MainState) -> dict:
     text = "\n".join(L) + "\n"
     path = run_dir / "report.md"
     path.write_text(text, encoding="utf-8")
+    progress.step("synthesize_report", f"report.md 생성 완료 ({path})")
 
     try:
         font = render_pdf(text, run_dir / "report.pdf")
         if font:
-            print(f"[report] report.pdf 생성 완료 (폰트: {font})")
+            progress.step("synthesize_report", f"report.pdf 생성 완료 (폰트: {font})")
         else:
-            print("[report] 한글 폰트를 찾지 못해 report.pdf를 건너뜀 (report.md만 생성). "
-                 "KV_REPORT_FONT=<ttf 경로>로 폰트를 지정해 보세요.")
+            progress.step("synthesize_report", "한글 폰트를 찾지 못해 report.pdf를 건너뜀 (report.md만 생성). "
+                          "KV_REPORT_FONT=<ttf 경로>로 폰트를 지정해 보세요.")
     except Exception as e:  # noqa: BLE001 — PDF 실패로 그래프 전체를 죽이지 않는다
-        print(f"[report] report.pdf 생성 실패, report.md만 유지: {type(e).__name__}: {e}")
+        progress.step("synthesize_report", f"report.pdf 생성 실패, report.md만 유지: {type(e).__name__}: {e}")
 
     return {**upd, "report_path": str(path)}

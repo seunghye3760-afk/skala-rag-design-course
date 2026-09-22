@@ -16,6 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from .. import progress
 from ..config import runtime, uses_rag
 from ..graph.task_schema import Chunk, CollectTask, Evidence, Locator
 from ..tools import open_source, web_search
@@ -53,6 +54,7 @@ class _Rewrite(BaseModel):
 
 def collect_evidence(task: CollectTask) -> dict:
     tech_id, cid = task.tech["tech_id"], task.criterion["id"]
+    progress.step("collect_evidence", f"{tech_id} {cid} (round {task.round}) 시작")
     queries = _build_queries(task)
 
     if os.getenv("KV_FAKE_EVIDENCE") == "1":
@@ -68,6 +70,8 @@ def collect_evidence(task: CollectTask) -> dict:
 
     log = [{"tech_id": tech_id, "criterion_id": cid, "round": task.round, "queries": queries,
             "results": len(evidence), "rewritten": rewritten, "searched_at": date.today().isoformat()}]
+    progress.step("collect_evidence", f"{tech_id} {cid} 완료 — 근거 {len(evidence)}건"
+                  + (" (쿼리 재작성함)" if rewritten else ""))
     return {"evidence_pool": evidence, "search_log": log}
 
 

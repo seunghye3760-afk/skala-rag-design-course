@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
+from .. import progress
 from ..agents.score_task import score_task
 from ..agents.tech_research import tech_research
 from ..config import rubrics, technologies_config
@@ -16,11 +17,13 @@ from .state import MainState
 
 
 def load_config(state: MainState) -> dict:
+    progress.step("load_config", "기술·도메인 설정 로드")
     cfg = technologies_config()
     return {"technologies": cfg["technologies"], "domain": cfg["domain"], "retry_round": 0}
 
 
 def load_rubrics(state: MainState) -> dict:
+    progress.step("load_rubrics", "루브릭·규칙 로드")
     return {"rubrics": rubrics()}
 
 

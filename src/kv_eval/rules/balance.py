@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 
+from .. import progress
 from ..config import criteria_list, runtime
 from ..graph.reducers import evidence_for, latest_results
 from ..graph.state import MainState
@@ -124,7 +125,10 @@ def balance_check(state: MainState) -> dict:
     issues = find_issues(state)
     rnd = state.get("retry_round", 0)
     if issues and rnd < runtime()["retry"]["max_rounds"]:
+        progress.step("balance_check", f"문제 {len(issues)}건 발견 → {rnd + 1}라운드 재시도")
         return {"balance_issues": issues, "retry_targets": issues, "retry_round": rnd + 1}
+    progress.step("balance_check", f"문제 {len(issues)}건"
+                  + (" — 재시도 한도 소진, info_gaps로 기록" if issues else " — 통과"))
     return {"balance_issues": issues, "retry_targets": [], "info_gaps": issues}
 
 
