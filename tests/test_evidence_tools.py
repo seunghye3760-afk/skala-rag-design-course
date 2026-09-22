@@ -163,7 +163,7 @@ def _item(**over):
 
 @pytest.fixture
 def real_collect(monkeypatch):
-    monkeypatch.setenv("KV_FAKE_EVIDENCE", "0")
+    monkeypatch.setenv("KV_FAKE", "0")
     monkeypatch.setattr(web_search, "search",
                         lambda q, max_results=5: [{"url": "https://a.com/1", "title": "T",
                                                    "content": "c", "published_date": "2026-05-01"}])
@@ -203,7 +203,7 @@ def test_collect_dedupes_same_source_same_claim(real_collect, monkeypatch):
 
 
 def test_collect_zero_results_rewrites_once_then_na(monkeypatch):
-    monkeypatch.setenv("KV_FAKE_EVIDENCE", "0")
+    monkeypatch.setenv("KV_FAKE", "0")
     monkeypatch.setattr(web_search, "search", lambda q, max_results=5: [])   # 항상 0건
     rewrites = []
 
@@ -219,8 +219,14 @@ def test_collect_zero_results_rewrites_once_then_na(monkeypatch):
     assert out["search_log"][0]["queries"]["pro"] == ["broader query"]
 
 
-def test_collect_rag_not_implemented_falls_back_to_web(real_collect, monkeypatch):
+def test_collect_rag_failure_falls_back_to_web(real_collect, monkeypatch):
+    import kv_eval.tools.paper_search as paper_search
+
+    def broken(query, k=5, doc_ids=None):
+        raise RuntimeError("인덱스 미구축")
+
+    monkeypatch.setattr(paper_search, "search", broken)
     monkeypatch.setattr(collect_mod, "_extract", lambda task, text, hint_source: [_item()])
-    # evidence_sources에 RAG 포함 + rag/retriever 미구현(NotImplementedError) → 웹 근거만으로 진행
+    # evidence_sources에 RAG 포함 + 논문 검색 실패(인덱스 미구축 등) → 웹 근거만으로 진행
     pool = collect_evidence(_task(evidence_sources=("RAG: 논문", "웹: 벤치마크")))["evidence_pool"]
     assert len(pool) == 1 and pool[0].source_url == "https://a.com/1"

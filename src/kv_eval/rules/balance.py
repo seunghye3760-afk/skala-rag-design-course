@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 
 from .. import progress
@@ -24,11 +25,27 @@ from ..graph.task_schema import CriterionResult, Evidence, RetryTarget, cell_key
 
 _NUM_RE = re.compile(r"\d[\d,.]*")
 _SCORE_MENTION_RE = re.compile(r"\d+\s*점")     # "3점"/"4점" 같은 점수 언급은 근거 수치가 아니다
+_EVIDENCE_ID_RE = re.compile(r"[a-z_]+-(?:TRL|MKT|STK|DOM)-\d+-r\d+-\d+")   # 인용 id의 숫자는 수치가 아니다
+# (끝에 \b를 두면 'r0-34에서'처럼 id 뒤에 한글이 붙을 때 경계가 성립하지 않아 매칭이 안 된다)
 
 
 def _numbers(text: str) -> set[str]:
-    text = _SCORE_MENTION_RE.sub("", text)
+    text = _EVIDENCE_ID_RE.sub("", _SCORE_MENTION_RE.sub("", text))
     return {n.strip(".,") for n in _NUM_RE.findall(text) if n.strip(".,")}
+
+
+def _covered(claimed: set[str], allowed: set[str]) -> bool:
+    """포맷 변형('3,547' vs '3,547.4 million')을 허용하는 수치 대조.
+    콤마를 지운 뒤 같거나, 2자리 이상이면 한쪽이 다른 쪽의 접두어여도 인정한다."""
+    an = {a.replace(",", "") for a in allowed}
+    for c in claimed:
+        cn = c.replace(",", "")
+        if cn in an:
+            continue
+        if len(cn) >= 2 and any(len(a) >= 2 and (a.startswith(cn) or cn.startswith(a)) for a in an):
+            continue
+        return False
+    return True
 
 
 def _worst_grade_only(ev: list[Evidence]) -> bool:
@@ -46,13 +63,23 @@ def _conditions_missing(ev: list[Evidence]) -> bool:
     return any(_NUM_RE.search(e.claim) and not (e.conditions or "").strip() for e in ev)
 
 
-def _unsupported_numbers(r: CriterionResult, ev_by_id: dict[str, Evidence]) -> bool:
-    """claim·rationale의 수치가 실제 인용한 근거의 excerpt에 없는가."""
-    claimed = _numbers(" ".join(b.claim for b in r.evidence) + " " + r.rationale)
+def _unsupported_numbers(r: CriterionResult, ev_by_id: dict[str, Evidence], crit: dict) -> bool:
+    """rationale의 수치가 인용한 근거(claim·excerpt·날짜)에도, 루브릭 기준에도 없는가.
+
+    - claim의 수치는 검사하지 않는다: claim은 수집 단계에서 조건(모델·문맥 길이·장비)을
+      요약해 넣도록 설계돼 있어(설계서 D-4) 한두 문장인 excerpt에 그 수치가 다 들어있지 않다.
+    - 루브릭 기준 수치(예: CAGR 20%, 3곳 이상)와 인용 근거의 날짜는 rationale이 정당하게
+      언급한다('4점 기준 미달' 서술 등). 채점자가 새로 만든 수치만 잡는다."""
+    claimed = _numbers(r.rationale)
     if not claimed:
         return False
-    excerpts = " ".join(ev_by_id[b.evidence_id].excerpt for b in r.evidence if b.evidence_id in ev_by_id)
-    return not claimed <= _numbers(excerpts)
+    allowed = [json.dumps(crit.get("rubric", {}), ensure_ascii=False), crit.get("question", "")]
+    for b in r.evidence:
+        allowed += [b.claim, b.date or ""]
+        e = ev_by_id.get(b.evidence_id)
+        if e:
+            allowed += [e.excerpt, e.published_at or ""]
+    return not _covered(claimed, _numbers(" ".join(allowed)))
 
 
 def _next_score_reason_missing(r: CriterionResult) -> bool:
@@ -109,7 +136,7 @@ def find_issues(state: MainState) -> list[RetryTarget]:
                 issues.append(RetryTarget(**target, kind="rescore", reason="형식 오류: 근거가 있는데 NA"))
             elif not r.evidence:
                 issues.append(RetryTarget(**target, kind="rescore", reason="형식 오류: 근거 인용 없이 점수"))
-            elif _unsupported_numbers(r, ev_by_id):
+            elif _unsupported_numbers(r, ev_by_id, c):
                 issues.append(RetryTarget(**target, kind="rescore",
                                           reason="형식 오류: claim·rationale의 수치가 인용 근거 excerpt에 없음"))
             elif _next_score_reason_missing(r):

@@ -5,7 +5,7 @@
   → 원문 확인·근거 추출(LLM 보조: 라벨만 뽑고 등급은 grading.grade 코드로) → 중복 제거
   → 0건이면 쿼리 재작성 1회 → 그래도 0건이면 빈 리스트 (NA 후보)
 
-KV_FAKE_EVIDENCE=1 이면 가짜 근거를 돌려준다 (그래프 뼈대 테스트용, tests/conftest.py가 설정).
+KV_FAKE=1 이면 가짜 근거를 돌려준다 (그래프 뼈대 테스트용, tests/conftest.py가 설정).
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def collect_evidence(task: CollectTask) -> dict:
     progress.step("collect_evidence", f"{tech_id} {cid} (round {task.round}) 시작")
     queries = _build_queries(task)
 
-    if os.getenv("KV_FAKE_EVIDENCE") == "1":
+    if os.getenv("KV_FAKE") == "1":
         evidence, rewritten = fake_evidence(task), False
     else:
         evidence = _collect_once(task, queries)
@@ -111,7 +111,7 @@ def _search_papers(queries: dict) -> list[Chunk]:
         for q in qs:
             try:
                 found = paper_search.search(q, k=runtime()["retrieval"]["top_k"])
-            except NotImplementedError:   # 담당 1 미구현 동안은 웹 근거만으로 진행
+            except Exception:             # 인덱스 미구축·의존성 미설치 등 — 웹 근거만으로 진행
                 return []
             for c in found:
                 chunks[c.chunk_id] = c
@@ -143,7 +143,8 @@ def _extract(task: CollectTask, text: str, hint_source: str) -> list[_Item]:
 
     llm = chat_model()
     crit = task.criterion
-    f = cache_file("extract", f"{llm.model_name}|{task.tech['tech_id']}|{crit['id']}|"
+    # v2: 추출 프롬프트가 바뀌면(예: PR#5 cited_primary_type 추가) 캐시를 자연 무효화하는 버전 태그
+    f = cache_file("extract", f"v2|{llm.model_name}|{task.tech['tech_id']}|{crit['id']}|"
                               f"{hashlib.sha256(text.encode('utf-8')).hexdigest()}")
     if f.exists():
         return [_Item(**d) for d in json.loads(f.read_text(encoding="utf-8"))]
@@ -221,7 +222,7 @@ def _rewrite_queries(task: CollectTask, queries: dict) -> dict:
 
 
 def fake_evidence(task: CollectTask) -> list[Evidence]:
-    """뼈대·그래프 테스트용 가짜 근거 (KV_FAKE_EVIDENCE=1일 때만 사용)."""
+    """뼈대·그래프 테스트용 가짜 근거 (KV_FAKE=1일 때만 사용)."""
     tech_id, cid = task.tech["tech_id"], task.criterion["id"]
     out = []
     for stance in ("pro", "con"):
