@@ -28,13 +28,34 @@ def _device(default: str) -> str:
     return os.getenv("KV_EMBED_DEVICE", default)
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=1)
 def _model(model_name: str, device: str):
+    _configure_torch()
     from sentence_transformers import SentenceTransformer  # 무거움: 함수 안 import
 
     if model_name not in MODELS:
         raise KeyError(f"등록되지 않은 임베딩 모델: {model_name} (rag/embeddings.py MODELS)")
     return SentenceTransformer(model_name, device=device)
+
+
+@lru_cache(maxsize=1)
+def _configure_torch() -> None:
+    """macOS CPU 임베딩에서 과도한 스레드·메모리 사용을 막는다.
+
+    SentenceTransformer의 encode는 내부적으로 큰 행렬곱을 수행한다. macOS의
+    CPU 백엔드에서 기본 inter-op/BLAS 스레드 수를 그대로 두면 작은 배치도
+    스레드가 과도하게 늘어나고, 프로세스 종료 시 resource_tracker 경고나
+    SIGSEGV로 이어질 수 있다. 필요하면 KV_TORCH_THREADS로 조정한다.
+    """
+    import torch
+
+    threads = max(1, int(os.getenv("KV_TORCH_THREADS", "1")))
+    torch.set_num_threads(threads)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        # 다른 torch 연산이 이미 시작된 프로세스에서는 변경할 수 없다.
+        pass
 
 
 def encode_docs(texts: list[str], model_name: str, device: str = "cpu"):

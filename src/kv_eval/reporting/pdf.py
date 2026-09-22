@@ -83,7 +83,78 @@ def _inline(text: str) -> str:
     return escape(text).replace("\n", "<br/>")
 
 
-def _build_story(md_text: str, styles: dict) -> list:
+_MAX_TABLE_CELL_CHARS = 320
+
+
+def _split_cell(text: str, limit: int = _MAX_TABLE_CELL_CHARS) -> list[str]:
+    """Split long table cells so ReportLab can break the table between rows.
+
+    ReportLab can split a Table between rows, but it cannot split a single row
+    whose tallest cell is higher than the page. Long evidence lists are
+    therefore split at semicolons/newlines first, then at a hard character
+    boundary for unusually long individual items.
+    """
+    text = str(text).strip()
+    if len(text) <= limit:
+        return [text]
+
+    pieces = re.split(r"(?<=;)\s+|\n", text)
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece:
+            continue
+        candidate = f"{current} {piece}".strip() if current else piece
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        while len(piece) > limit:
+            chunks.append(piece[:limit])
+            piece = piece[limit:]
+        current = piece
+    if current or not chunks:
+        chunks.append(current)
+    return chunks
+
+
+def _expand_table_rows(rows: list[list[str]]) -> list[list[str]]:
+    """Turn long logical rows into page-breakable physical rows."""
+    if not rows:
+        return []
+    column_count = max(len(row) for row in rows)
+    expanded: list[list[str]] = []
+    for source_row in rows:
+        row = list(source_row) + [""] * (column_count - len(source_row))
+        columns = [_split_cell(cell) for cell in row]
+        row_count = max(len(parts) for parts in columns)
+        for row_index in range(row_count):
+            physical_row: list[str] = []
+            for column_index, parts in enumerate(columns):
+                value = parts[row_index] if row_index < len(parts) else ""
+                # Keep labels/verdicts on the first continuation row only,
+                # while preserving continuation text if those cells are long.
+                if row_index and len(parts) == 1:
+                    value = ""
+                physical_row.append(value)
+            expanded.append(physical_row)
+    return expanded
+
+
+def _table_widths(column_count: int, total_width: float) -> list[float]:
+    if column_count == 4:
+        # The report's comparison table has two evidence-heavy columns.
+        first = 44.0
+        last = 64.0
+        middle = (total_width - first - last) / 2
+        return [first, middle, middle, last]
+    return [total_width / column_count] * column_count
+
+
+def _build_story(md_text: str, styles: dict, table_width: float) -> list:
     lines = md_text.split("\n")
     story: list = []
     i, n = 0, len(lines)
@@ -106,8 +177,13 @@ def _build_story(md_text: str, styles: dict) -> list:
                     rows.append(_cells(lines[i]))
                 i += 1
             if rows:
-                tbl = Table([[Paragraph(_inline(c), styles["cell"]) for c in row] for row in rows],
-                           repeatRows=1)
+                rows = _expand_table_rows(rows)
+                tbl = Table(
+                    [[Paragraph(_inline(c), styles["cell"]) for c in row] for row in rows],
+                    colWidths=_table_widths(len(rows[0]), table_width),
+                    repeatRows=1,
+                    splitByRow=1,
+                )
                 tbl.setStyle(TableStyle([
                     ("FONTNAME", (0, 0), (-1, -1), styles["font"]),
                     ("FONTSIZE", (0, 0), (-1, -1), 8.5),
@@ -156,7 +232,7 @@ def _styles(font: str) -> dict:
         "h3": ParagraphStyle("h3", fontSize=12, leading=16, spaceAfter=4, **base),
         "h4": ParagraphStyle("h4", fontSize=10.5, leading=14, spaceAfter=3, **base),
         "body": ParagraphStyle("body", fontSize=9.5, leading=14, **base),
-        "cell": ParagraphStyle("cell", fontSize=8.5, leading=11, **base),
+        "cell": ParagraphStyle("cell", fontSize=8.5, leading=11, splitLongWords=1, **base),
         "quote": ParagraphStyle("quote", fontSize=9, leading=13, leftIndent=12,
                                 textColor=colors.HexColor("#555555"), **base),
     }
@@ -172,5 +248,5 @@ def render_pdf(md_text: str, out_path: Path) -> str | None:
     doc = SimpleDocTemplate(str(out_path), pagesize=A4,
                             topMargin=18 * mm, bottomMargin=18 * mm,
                             leftMargin=16 * mm, rightMargin=16 * mm)
-    doc.build(_build_story(md_text, styles))
+    doc.build(_build_story(md_text, styles, doc.width))
     return font
