@@ -217,7 +217,8 @@ def fake_evidence(task: CollectTask) -> list[Evidence]:
         eid = f"FAKE-{tech_id}-{cid}-{stance}-r{task.round}"
         out.append(Evidence(
             evidence_id=eid, tech_id=tech_id, criterion_id=cid, claim=f"[FAKE] {stance} 근거",
-            source_title="FAKE SOURCE", source_url=None, publisher="FAKE", accessed_at=date.today().isoformat(),
+            source_title=f"FAKE SOURCE ({stance})", source_url=None, publisher="FAKE",
+            accessed_at=date.today().isoformat(),
             source_type="FAKE", evidence_grade="C", stance=stance, measurement_type="FAKE",
             excerpt="FAKE", locator=Locator(doc_id="FAKE"), round=task.round))
     return out
