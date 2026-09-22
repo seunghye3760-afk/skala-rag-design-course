@@ -4,7 +4,7 @@ from pathlib import Path
 from kv_eval.graph.main import build_graph
 
 
-def test_graph_runs(tmp_path, monkeypatch):
+def test_graph_runs(tmp_path, monkeypatch, fake_market_and_stakeholder_scoring):
     monkeypatch.setenv("KV_OUTPUT_DIR", str(tmp_path))
     final = build_graph().invoke({"run_id": "t", "only_criteria": ["TRL-1", "MKT-2", "DOM-4"]})
     assert len(final["final_results"]) == 6

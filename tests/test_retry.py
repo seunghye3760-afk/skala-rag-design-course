@@ -3,7 +3,7 @@ from kv_eval.evidence import collect as collect_mod
 from kv_eval.graph.main import build_graph
 
 
-def test_retry_only_targets(monkeypatch):
+def test_retry_only_targets(monkeypatch, fake_market_and_stakeholder_scoring):
     original = collect_mod.fake_evidence
 
     def flaky(task):
