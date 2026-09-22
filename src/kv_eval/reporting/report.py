@@ -16,6 +16,7 @@ from ..graph.state import MainState
 from .pdf import render_pdf
 
 _GRADE_KO = {"A": "독립 실측/공식 공시", "B": "당사자 실측/발표", "C": "시뮬레이션/추정", "D": "2차 자료"}
+_GRADE_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3}
 
 
 def _dump(path, items):
@@ -66,6 +67,21 @@ def _tech_conditions(state: MainState, tech_id: str, cid: str) -> set[str]:
            and (e.conditions or "").strip()}
 
 
+_MAX_SHOWN = 3       # 2.4 표 한 셀에 대표로 보여줄 조건 개수
+_MAX_LEN = 80         # 조건 문자열 하나당 최대 길이
+
+
+def _format_conditions(conds: set[str]) -> str:
+    """근거가 많으면 조건 문자열을 전부 이어 붙이지 않고 대표 몇 개만 보여준다.
+    (판정은 이 함수를 거치지 않은 전체 집합으로 따로 계산한다.)"""
+    if not conds:
+        return "(없음)"
+    items = sorted(conds, key=len)[:_MAX_SHOWN]      # 짧고 구체적인 조건부터 대표로
+    shown = "; ".join(c[:_MAX_LEN] + ("…" if len(c) > _MAX_LEN else "") for c in items)
+    rest = len(conds) - len(items)
+    return shown + (f" 외 {rest}건" if rest > 0 else "")
+
+
 def _ch2(state: MainState, names: dict) -> list[str]:
     tcfg = technologies_config()["technologies"]
     by_id = {t["tech_id"]: t for t in tcfg}
@@ -90,7 +106,7 @@ def _ch2(state: MainState, names: dict) -> list[str]:
         if not a and not b:
             continue
         verdict = "정보 부족" if not a or not b else ("비교 가능" if a & b else "직접 비교 불가")
-        L.append(f"| {cid} | {'; '.join(a) or '(없음)'} | {'; '.join(b) or '(없음)'} | {verdict} |")
+        L.append(f"| {cid} | {_format_conditions(a)} | {_format_conditions(b)} | {verdict} |")
     L.append("")
     return L
 
@@ -238,9 +254,21 @@ def _appendix(state: MainState) -> list[str]:
     return L
 
 
+def _dedupe_by_source(refs: list) -> list:
+    """같은 출처(URL 또는 논문)를 여러 evidence_id가 인용해도 REFERENCE엔 한 번만 싣는다.
+    같은 출처가 등급이 다르게 나오면(드묾) 더 좋은 등급 쪽을 남긴다."""
+    by_source: dict[tuple, object] = {}
+    for e in refs:
+        key = (e.source_url or e.locator.doc_id, e.source_title)
+        cur = by_source.get(key)
+        if cur is None or _GRADE_ORDER[e.evidence_grade] < _GRADE_ORDER[cur.evidence_grade]:
+            by_source[key] = e
+    return sorted(by_source.values(), key=lambda e: e.source_title or "")
+
+
 def _reference(state: MainState) -> list[str]:
     cited = {b.evidence_id for r in state.get("final_results", []) for b in r.evidence}
-    refs = [e for e in state.get("evidence_pool", []) if e.evidence_id in cited]
+    refs = _dedupe_by_source([e for e in state.get("evidence_pool", []) if e.evidence_id in cited])
     L = ["## REFERENCE", "", "> 보고서 본문에서 실제로 인용한 자료만 수록. 검색했지만 인용하지 않은 "
         "자료는 부록 B 검색 로그에만 남긴다.", ""]
     for e in refs:
