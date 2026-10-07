@@ -6,7 +6,16 @@ from typing import Annotated, TypedDict
 
 from langgraph.graph.message import add_messages
 
-from .task_schema import ConflictCandidate, CriterionResult, Evidence, RetryTarget, TRLResult
+from .task_schema import (
+    ConflictCandidate,
+    CriterionResult,
+    Evidence,
+    ReportQualityResult,
+    RetryTarget,
+    TRLResult,
+    WorkerResult,
+    WorkPlan,
+)
 
 
 class MainState(TypedDict, total=False):
@@ -19,6 +28,8 @@ class MainState(TypedDict, total=False):
     evidence_pool: Annotated[list[Evidence], operator.add]
     search_log: Annotated[list[dict], operator.add]
     criterion_results: Annotated[list[CriterionResult], operator.add]
+    work_plan: WorkPlan
+    worker_results: Annotated[list[WorkerResult], operator.add]
     balance_issues: list[RetryTarget]
     retry_targets: list[RetryTarget]
     retry_round: int                   # 전역 카운터, 최대 2
@@ -27,5 +38,9 @@ class MainState(TypedDict, total=False):
     trl_results: list[TRLResult]
     conflicts: list[ConflictCandidate]
     final_assessment: dict
+    report_draft: str
+    report_quality: ReportQualityResult
+    report_retry_round: int
+    report_page_count: int
     report_path: str
     messages: Annotated[list, add_messages]

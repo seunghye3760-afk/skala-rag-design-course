@@ -121,6 +121,32 @@ class ScoreTask(BaseModel):
     round: int = 0
 
 
+class WorkPlan(BaseModel):
+    """현재 phase에서 Orchestrator가 실행할 수집·채점 작업 목록."""
+    collect_tasks: list[CollectTask] = Field(default_factory=list)
+    score_tasks: list[ScoreTask] = Field(default_factory=list)
+    round: int = 0
+    reason: str = "initial"
+
+
+class WorkerResult(BaseModel):
+    """Worker 실행 결과 메타데이터. 실제 근거·채점 결과는 기존 State 키에 누적한다."""
+    task_id: str
+    kind: Literal["collect", "score"]
+    status: Literal["completed", "partial", "failed"]
+    produced_count: int = 0
+    retryable: bool = False
+    error: str | None = None
+
+
+class ReportQualityResult(BaseModel):
+    """보고서 품질 및 실제 PDF 페이지 수 판정 결과."""
+    passed: bool
+    page_count: int | None = None
+    issues: list[str] = Field(default_factory=list)
+    retry_kind: Literal["research", "rescore", "rewrite", "compress"] | None = None
+
+
 class TRLResult(BaseModel):
     tech_id: TechId
     trl_level: int
