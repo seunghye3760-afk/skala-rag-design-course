@@ -115,6 +115,11 @@ TRL·시장성·이해관계자·도메인(AI 데이터센터 LLM 추론) 4관�
 
 ## Architecture
 
+![Orchestrator-Workers 그래프](docs/main_graph_orchestrator.png)
+
+<details>
+<summary>mermaid 원본</summary>
+
 ```mermaid
 flowchart TD
     S([START]) --> I[init] --> C[load_config] --> R[load_rubrics] --> T[tech_research<br/>논문 brief]
@@ -136,11 +141,13 @@ flowchart TD
     G -. groundedness/bias 셀 .-> P
     G -. coverage .-> SD
     G -. neutrality .-> Y
-    G -. 통과 또는 quality_round=2 .-> F[finalize<br/>미달 기록 · 쪽수 ≤ 10 (4단계 압축) · report_meta]
+    G -. 통과 또는 quality_round=2 .-> F[finalize<br/>지적 사항 기록 · 쪽수 ≤ 10 · report_meta]
     F --> X([END])
 ```
 
-그래프 정의에서 생성한 원본: [`docs/main_graph_orchestrator.mmd`](docs/main_graph_orchestrator.mmd) (`uv run python scripts/draw_orchestrator_graph.py`).
+</details>
+
+LangGraph 정의에서 자동 생성한 원본 그래프: [`docs/main_graph_orchestrator.mmd`](docs/main_graph_orchestrator.mmd) (`uv run python scripts/draw_orchestrator_graph.py`). 위 그림은 그 그래프에 각 노드의 역할을 덧붙인 것입니다.
 설계 근거 전문은 [`docs/architecture.md`](docs/architecture.md)의 Orchestrator 절과 [`docs/agent_assignment/`](docs/agent_assignment/)를 참고하세요.
 
 ### 보고서 품질 평가 노드 (상세)
