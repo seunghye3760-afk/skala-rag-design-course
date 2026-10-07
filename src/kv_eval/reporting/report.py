@@ -157,7 +157,8 @@ def _ch3(state: MainState) -> list[str]:
            f"**3.3 4관점 {n}개 항목** — TRL {by_agent['trl']} / 시장성 {by_agent['market']} / "
            f"이해관계자 {by_agent['stakeholder']} / 도메인 {by_agent['domain']}.", "",
            "**3.4 근거 등급과 상한** — A(독립 실측·공식 공시) 5점까지, B(당사자 실측·발표) 4점까지, C(시뮬레이션·추정)·"
-           "D(2차 자료) 3점까지. 관련 근거 0건일 때만 NA, 부정 근거가 C·D뿐이면 최저 2점 (rules/caps.py).", "",
+           "D(2차 자료) 3점까지. 관련 근거 0건일 때만 NA, 부정 근거가 C·D뿐이면 최저 2점 (rules/caps.py). 채점 LLM에게도 같은 규칙을 "
+           "프롬프트로 주므로 코드 상한은 안전장치이며, 실행에서 상한이 한 번도 걸리지 않으면 4·5장 표는 원점수 열 대신 최고 등급 열을 보인다.", "",
            "**3.5 검색 규칙·균형 점검·가드레일** — 두 기술에 같은 쿼리 템플릿·max_results·기간(2025-01 이후). 균형 점검은 "
            "근거 공백·편향·조건 누락·채점 형식 오류 4종을 rules/balance.py 코드로 판정한다 (LLM 판정 아님).", "",
            "**3.6 TRL 산출과 상충 분석** — TRL은 rules/trl_gate.py 게이트 규칙(TRL-1~5 차원 점수 조합)으로, 상충 후보는 "
@@ -166,8 +167,9 @@ def _ch3(state: MainState) -> list[str]:
 
 # ---------- 4~5. 기술별 평가 결과 ----------
 
-def _criterion_row(r, pub_by_id: dict[str, str] | None = None) -> str:
-    """근거 열: 등급 분포(pro/con)와 발행 주체 2곳까지. evidence_id 전체 목록은 부록 A에."""
+def _criterion_row(r, pub_by_id: dict[str, str] | None = None, show_caps: bool = True) -> str:
+    """근거 열: 등급 분포(pro/con)와 발행 주체 2곳까지. evidence_id 전체 목록은 부록 A에.
+    show_caps=False면 원점수·상한 적용 열 대신 최고 등급 열 (이번 실행에서 상한이 한 번도 안 걸렸을 때)."""
     grades = {}
     for b in r.evidence:
         grades[b.grade] = grades.get(b.grade, 0) + 1
@@ -181,6 +183,9 @@ def _criterion_row(r, pub_by_id: dict[str, str] | None = None) -> str:
             srcs.append(name)
     src_txt = "; ".join(srcs[:2]) + (f" 외 {len(srcs) - 2}" if len(srcs) > 2 else "")
     ev = f"{len(r.evidence)}건 ({dist}, pro {pro}/con {con}) — {src_txt}" if r.evidence else "(근거 없음)"
+    if not show_caps:
+        best = min((b.grade for b in r.evidence), default="-")
+        return f"| {r.criterion_id} | {r.score} | {best} | {r.confidence} | {ev} |"
     return f"| {r.criterion_id} | {r.score} | {r.raw_score} | {r.confidence} | {r.cap_applied or ''} | {ev} |"
 
 
@@ -193,6 +198,9 @@ def _tech_chapter(state: MainState, tech_id: str, names: dict, assessment: dict,
         by_agent.setdefault(r.agent_type, []).append(r)
     trl = next((tr for tr in state.get("trl_results", []) if tr.tech_id == tech_id), None)
     pub_by_id = {e.evidence_id: e.publisher for e in state.get("evidence_pool", [])}
+    show_caps = any(r.cap_applied for r in state.get("final_results", []))   # 상한이 한 번도 안 걸리면 열 생략
+    header = ("| 항목 | 점수 | 원점수 | 확신도 | 상한 적용 | 근거 |\n|---|---|---|---|---|---|" if show_caps
+              else "| 항목 | 점수 | 최고 등급 | 확신도 | 근거 |\n|---|---|---|---|---|")
 
     L = [f"## {num}. {names[tech_id]} 평가 결과", "",
         f"### {num}.1 {agent_titles['trl']} — 기법 TRL / 기반 부품 성숙도", ""]
@@ -212,8 +220,8 @@ def _tech_chapter(state: MainState, tech_id: str, names: dict, assessment: dict,
         if not rows:
             L += ["(이번 실행 범위에 포함되지 않은 관점 — `--criteria`로 항목을 좁혀 실행함)", ""]
             continue
-        L += ["| 항목 | 점수 | 원점수 | 확신도 | 상한 적용 | 근거 |", "|---|---|---|---|---|---|"]
-        L += [_criterion_row(r, pub_by_id) for r in rows]
+        L += header.split("\n")
+        L += [_criterion_row(r, pub_by_id, show_caps) for r in rows]
         L.append("")
     L += [f"### {num}.5 관점 간 상충 지점과 정보 공백 (P1~P6)", ""]
     own = [c for c in state.get("conflicts", []) if c.tech_id == tech_id]
