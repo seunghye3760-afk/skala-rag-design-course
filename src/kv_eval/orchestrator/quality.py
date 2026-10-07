@@ -213,7 +213,13 @@ def _judge_input(state: OrchestratorState, secs: dict[str, str]) -> str:
             continue
         seen.add(e.evidence_id)
         lines.append(f"- {e.evidence_id} [{e.evidence_grade}/{e.stance}] {e.source_title}: {e.excerpt[:200]}")
-    return f"[보고서 본문]\n{body}\n\n[인용 근거 원문 발췌]\n" + "\n".join(lines)
+    rub = state["rubrics"]
+    scoped = criteria_list(rub, state.get("only_criteria"))
+    agents = sorted({c["agent"] for c in scoped})
+    scope = (f"[이번 실행 범위] 평가 항목 {[c['id'] for c in scoped]} / 관점 {agents}. "
+             f"범위 밖 관점·항목이 비어 있는 것은 설계된 축소 실행이므로 coverage·bias 감점 사유로 삼지 않는다."
+             if state.get("only_criteria") else "[이번 실행 범위] 전체 항목 · 4관점")
+    return f"{scope}\n\n[보고서 본문]\n{body}\n\n[인용 근거 원문 발췌]\n" + "\n".join(lines)
 
 
 def judge_node(state: OrchestratorState) -> dict:
