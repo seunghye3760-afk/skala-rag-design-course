@@ -343,7 +343,34 @@ def _enforce_page_limit(state: OrchestratorState, path: Path, text: str, pages: 
         before, new_pages = new_pages, _pdf_pages(path.with_suffix(".pdf"))
         decision(state.get("run_id", "run"), "finalize", "trim_key_numbers",
                  f"본문 {before}쪽 > {limit}쪽 → 4·5장 핵심 수치 표를 3행으로 → {new_pages}쪽")
+    if new_pages is not None and new_pages > limit:                    # 4단계: 핵심 수치 표 제거 + 2장 brief 2줄
+        slim = _trim_key_numbers(slim, keep=0)
+        slim = _trim_brief_bullets(slim, keep=2)
+        path.write_text(slim, encoding="utf-8")
+        try:
+            report_mod.render_pdf(slim, path.with_suffix(".pdf"))
+        except Exception as e:  # noqa: BLE001
+            progress.step("finalize", f"PDF 재생성 실패: {type(e).__name__}: {e}")
+        before, new_pages = new_pages, _pdf_pages(path.with_suffix(".pdf"))
+        decision(state.get("run_id", "run"), "finalize", "drop_key_numbers",
+                 f"본문 {before}쪽 > {limit}쪽 → 핵심 수치 표 제거(부록·evidence.json 참고)·2장 brief 2줄 → {new_pages}쪽")
     return new_pages
+
+
+def _trim_brief_bullets(text: str, keep: int = 2) -> str:
+    """2.1/2.2의 brief 불릿(해결 병목·효과 조건·품질/비용·미평가 조건) 중 앞 keep개만 남긴다."""
+    out, count, in_sec = [], 0, False
+    for line in text.splitlines():
+        if line.startswith("### 2.1") or line.startswith("### 2.2"):
+            in_sec, count = True, 0
+        elif line.startswith("### ") or line.startswith("## "):
+            in_sec = False
+        if in_sec and line.startswith("- **"):
+            count += 1
+            if count > keep:
+                continue
+        out.append(line)
+    return "\n".join(out) + "\n"
 
 
 def _trim_key_numbers(text: str, keep: int = 3) -> str:
@@ -352,11 +379,15 @@ def _trim_key_numbers(text: str, keep: int = 3) -> str:
     for line in text.splitlines():
         if line.startswith("| 항목 | 등급/방향 | 수치가 포함된 주장 |"):
             in_tbl, kept = True, 0
+            if keep <= 0:
+                out.append("(핵심 수치 근거 표는 쪽수 제한으로 생략 — 부록 A·evidence.json 참고)")
+                continue
             out.append(line)
             continue
         if in_tbl:
             if line.startswith("|---"):
-                out.append(line)
+                if keep > 0:
+                    out.append(line)
                 continue
             if line.startswith("| "):
                 kept += 1
