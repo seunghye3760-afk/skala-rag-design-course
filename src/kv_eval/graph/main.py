@@ -4,6 +4,9 @@ tech_research → plan_tasks(Orchestrator) ─Send×N(계획이 결정)→ run_s
 → 채점 fan-out → balance_check ─┬ 근거 문제 → plan_tasks (해당 셀만 재계획)
                                 ├ 형식 오류만 → score_dispatch
                                 └ 통과/한도 소진 → apply_rules → synthesize_report(Synthesizer)
+→ quality_eval ─┬ 통과 / 한도 소진 → END
+                ├ 근거 문제 셀 → plan_tasks (재계획)
+                └ 서술 문제만 → synthesize_report (지적 사항 반영 재작성)
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ from .. import progress
 from ..agents.score_task import score_task
 from ..agents.tech_research import tech_research
 from ..config import rubrics, technologies_config
+from ..quality.evaluate import quality_eval, route_after_quality
 from ..reporting.report import synthesize_report
 from ..orchestrator.planner import fan_out_workers, plan_tasks
 from ..orchestrator.workers import run_subtask
@@ -40,7 +44,8 @@ def build_graph():
                      ("run_subtask", run_subtask), ("evidence_join", evidence_join),
                      ("score_dispatch", score_dispatch), ("score_task", score_task),
                      ("score_join", score_join), ("balance_check", balance_check),
-                     ("apply_rules", apply_rules), ("synthesize_report", synthesize_report)]:
+                     ("apply_rules", apply_rules), ("synthesize_report", synthesize_report),
+                     ("quality_eval", quality_eval)]:
         g.add_node(name, fn)
     g.add_edge(START, "load_config")
     g.add_edge("load_config", "load_rubrics")
@@ -55,5 +60,7 @@ def build_graph():
     g.add_conditional_edges("balance_check", route_after_balance,
                             ["plan_tasks", "score_dispatch", "apply_rules"])
     g.add_edge("apply_rules", "synthesize_report")
-    g.add_edge("synthesize_report", END)
+    g.add_edge("synthesize_report", "quality_eval")
+    g.add_conditional_edges("quality_eval", route_after_quality,
+                            ["plan_tasks", "synthesize_report", END])
     return g.compile()

@@ -13,4 +13,7 @@ flowchart TD
     BAL -->|"형식 오류만<br/>retry_round < 2"| FAN
     BAL -->|"문제 없음 또는 한도 소진<br/>(남은 항목 → info_gaps)"| RULE["apply_rules · 코드<br/>상한·하한 → TRL 산출<br/>→ 상충 후보 추출"]
     RULE --> SYN["synthesize_report · Synthesizer (LLM)<br/>관점별 서술<br/>상충 후보를 근거·조건과 대조"]
-    SYN --> END([END · report.pdf 초안])
+    SYN --> QE{"quality_eval · Hybrid<br/>규칙 + LLM Judge<br/>Groundedness · 중립성 · 편향 · 관점 커버리지"}
+    QE -->|"근거 문제 셀<br/>quality_round < 2"| DC
+    QE -->|"서술 문제만<br/>quality_round < 2"| SYN
+    QE -->|"통과 또는 한도 소진"| END([END · report.pdf + quality_r*.json])

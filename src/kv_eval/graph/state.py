@@ -7,6 +7,7 @@ from typing import Annotated, TypedDict
 from langgraph.graph.message import add_messages
 
 from ..orchestrator.schema import Plan, WorkerOutcome
+from ..quality.schema import EvalVerdict
 from .task_schema import ConflictCandidate, CriterionResult, Evidence, RetryTarget, TRLResult
 
 
@@ -31,4 +32,7 @@ class MainState(TypedDict, total=False):
     conflicts: list[ConflictCandidate]
     final_assessment: dict
     report_path: str
+    eval_result: EvalVerdict           # 최근 품질 평가 판정 (축별 통과 여부·다음 경로·사유)
+    quality_round: int                 # 품질 평가 루프 카운터 (종료 보장)
+    quality_feedback: list[str]        # 재작성 때 종합 에이전트에 넘기는 지적 사항
     messages: Annotated[list, add_messages]
