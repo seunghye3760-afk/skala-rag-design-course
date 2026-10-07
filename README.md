@@ -114,7 +114,7 @@ flowchart TD
     QE -->|통과 / 한도| E([END])
 ```
 
-코드에서 자동 생성한 그래프: [`docs/agent_graph.mmd`](docs/agent_graph.mmd) · LangSmith 트레이스: `deliverables/tracing-*.png`
+`main` 대비 구조도·Orchestrator 내부·Worker 경로·State 저장 시점: [`docs/diagrams.md`](docs/diagrams.md) · 코드에서 자동 생성한 그래프: [`docs/agent_graph.mmd`](docs/agent_graph.mmd) · LangSmith 트레이스: `deliverables/tracing-*.png`
 
 ## Directory Structure
 
