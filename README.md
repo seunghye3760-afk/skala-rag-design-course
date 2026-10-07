@@ -7,7 +7,7 @@ TRL·시장성·이해관계자·도메인(AI 데이터센터 LLM 추론) 4관�
 
 - 실행 스크립트: `app_agent.py` (Orchestrator-Workers) · `app.py`는 이전 RAG 실습 그래프로 그대로 둠
 - 조정 계층: `src/kv_eval/orchestrator/` · worker·규칙·보고서 모듈은 RAG 실습 코드를 재사용
-- 테스트: `uv run pytest` (95개, `KV_FAKE=1` 가짜 모드로 키 없이 전체 그래프 검증)
+- 테스트: `uv run pytest` (97개, `KV_FAKE=1` 가짜 모드로 키 없이 전체 그래프 검증)
 
 ---
 
@@ -20,13 +20,16 @@ TRL·시장성·이해관계자·도메인(AI 데이터센터 LLM 추론) 4관�
   2. **되돌아가는 셀만 다시** — 균형 점검(`balance_check`)이 잡은 셀, 품질 평가가 미달로 돌려보낸 셀만 플래너가 재계획합니다. 이때 플래너는 사유("비판 근거 없음", "단일 출처" …)를 읽고 쿼리를 다시 씁니다.
   3. **종료는 상태 조건** — "pending 서브태스크 0개", "retry_targets 비어 있음", "품질 통과"로 끝나며, `retry.max_rounds=2 · quality.max_rounds=2 · recursion_limit=150`은 안전장치입니다.
 
-  실제 실행(2026-10-07, `--criteria TRL-1,DOM-4`, gpt-5.4-mini)의 라운드별 수집 fan-out: **8 → 1 → 1 → 4**
-  (초기 LLM 계획 8 / 균형 점검 재검색 1 / 재검색 1 / 품질 미달 재계획 4). 가짜 모드 전체 실행: 셀 36 → worker 54.
-  전체 18항목 실제 실행(2026-10-07 14:43, gpt-5.4-mini, 14분): 셀 36 → **worker 78 → 4 → 5** (초기 계획: paper+web 30 · web+open_source 16 · web 32 /
-  균형 점검 재검색 2셀을 4개로 / 2셀을 5개로), 채점 36 → 7 → 3셀, 품질 평가 2회(규칙 통과, Judge 미달 기록), 정보 공백 2건, 121 스텝.
-  같은 입력 3회 연속 실행(PassK, 15:16~15:42): 초기 fan-out **78 / 72 / 74**, 재시도 라운드 5→4 / 12→8 / 8→12 — 플래너가 매번 다른 계획을 내도
-  셀 커버리지는 가드로 유지되고 세 번 모두 무한 루프 없이 정상 종료(status PARTIAL). 2·3회차는 Tavily 검색 한도 소진으로 worker 52·58개가
-  fallback(제외 + info_gap)으로 처리됐는데도 파이프라인이 끝까지 돌았다. LangSmith 캡처: {tracing-2.png 기입}
+  **실측 (2026-10-07, gpt-5.4-mini, 실제 API)**
+
+  | 실행 | 셀 수 | 수집 fan-out (라운드별) | 채점 셀 | 품질 평가 | 비고 |
+  |---|---|---|---|---|---|
+  | `--criteria TRL-1,DOM-4` | 4 | **8 → 1 → 1 → 4** | 4 → 2 → 1 → 2 | 2회 (규칙 통과, Judge 미달 기록) | 마지막 4는 품질 미달 셀 재계획 |
+  | 전체 18항목 (14:43) | 36 | **78 → 4 → 5** (paper+web 30 · web+open_source 16 · web 32) | 36 → 7 → 3 | 2회 | 정보 공백 2, 121 스텝, 14분 |
+  | 전체 3회 연속 (PassK) | 36 | **78 / 72 / 74** → 5·4 / 12·8 / 8·12 | — | 3회 모두 규칙 통과, Judge 근거성·편향 3점 | 2·3회차는 Tavily 한도 소진으로 worker 52·58개 fallback, 그래도 정상 종료 |
+  | 가짜 모드 (`KV_FAKE=1`) | 36 | 54 | 36 | 통과 | 키 없이 뼈대 검증 |
+
+  플래너가 매번 다른 계획을 내도 셀 커버리지는 코드 가드가 유지하고, 모든 실행이 무한 루프 없이 종료했습니다. LangSmith 캡처: {tracing-1/2/3.png 기입}
 
 ---
 
@@ -47,8 +50,8 @@ TRL·시장성·이해관계자·도메인(AI 데이터센터 LLM 추론) 4관�
 - TRL·시장성·이해관계자·도메인 4관점 독립 채점 (구조화 출력, 근거 ID 인용 강제)
 - 균형 점검 4종(근거 공백·편향·조건 누락·형식 오류) → 대상 셀만 재검색·재채점 (코드 규칙)
 - 점수 상한·하한, TRL 게이트, 상충 후보 추출 (코드 규칙, LLM 판정 아님)
-- **보고서 품질 평가** : Groundedness·중립성·편향 통제·관점 커버리지 — 규칙(결정적) → LLM Judge Hybrid, 미달 시 항목별 Loop(최대 2회), 미달 사유를 Generator 프롬프트에 주입
-- 보고서(SUMMARY … REFERENCE) Markdown·PDF, 10쪽 초과 시 부록 자동 분리
+- **보고서 품질 평가** : Groundedness·중립성·편향 통제·관점 커버리지(+ 출력 무결성) — 규칙(결정적) → LLM Judge Hybrid, 미달 시 항목별 Loop(최대 2회), 미달 사유를 Generator 프롬프트에 주입
+- 보고서(SUMMARY … REFERENCE) Markdown·PDF, 10쪽 초과 시 4단계 자동 압축(부록 분리 → REFERENCE 간략 표기 → 핵심 수치 표 축소 → 제거), 실제 실행 데이터 36~39쪽 → 10쪽
 - 결정 로그(`decision_log.jsonl`)·LangSmith 트레이스·`report_meta.json`으로 실행 전 과정 추적
 - **확증 편향 방지 전략** : ① 두 기술에 같은 검색 템플릿·같은 max_results·같은 기간(설계서 C-5 대칭, 코드 가드가 `{tech}` 자리 강제) ② 항목마다 긍정(pro)·비판(con) 쿼리를 반드시 둘 다 실행 ③ 검색 요약이 아니라 원문을 열어 확인한 문장만 Evidence로 ④ LLM 판단(계획·채점·종합·Judge)과 규칙 검증(균형 점검·상한·TRL·품질 규칙)을 다른 함수로 분리 ⑤ 근거가 부족하면 추정하지 않고 `info_gaps`에 기록 ⑥ 균형 점검이 "한쪽 근거만", "단일 출처", "최고 등급 D뿐"을 코드로 잡아 재검색 ⑦ 품질 평가에서 기술별 출처 다양성·pro/con 비율을 다시 확인
 
@@ -126,14 +129,14 @@ flowchart TD
     B -. 형식 오류만 .-> SD
     B -. 통과·한도 .-> A[apply_rules<br/>상한·TRL·상충]
     A --> Y[synthesize_report<br/>LLM 종합 + 조립]
-    Y --> E[evaluate_report<br/>품질 규칙 4항목]
+    Y --> E[evaluate_report<br/>품질 규칙 4항목 + 무결성]
     E -. 규칙 PASS .-> JD[judge_node<br/>LLM 1~5점, 판정만]
     E -. 규칙 미달 .-> G{route_after_quality<br/>순수 함수}
     JD --> G
     G -. groundedness/bias 셀 .-> P
     G -. coverage .-> SD
     G -. neutrality .-> Y
-    G -. 통과 또는 quality_round=2 .-> F[finalize<br/>미달 기록 · 쪽수 ≤ 10 · report_meta]
+    G -. 통과 또는 quality_round=2 .-> F[finalize<br/>미달 기록 · 쪽수 ≤ 10 (4단계 압축) · report_meta]
     F --> X([END])
 ```
 
@@ -148,8 +151,9 @@ flowchart TD
 | 중립성 | 금지 표현 사전(`configs/quality.yaml`: 더 우수·우월·추천·순위·1위·승자·총점 …) 0건, `final_assessment`에 합산 키 없음 | 우열·추천 뉘앙스 | `synthesize_report` 재생성 (피드백 주입) |
 | 편향 통제 | 기술별 인용 출처 ≥ 2, pro·con 양쪽 근거 항목 비율 ≥ 0.5, 단일 출처 항목 비율 ≤ 0.5 | 유리한 근거 편중·단일 출처 의존 | 미달 셀 → `plan_tasks` 재수집 |
 | 관점 커버리지 | 실행 범위의 기술 × 관점마다 NA 아닌 결과 ≥ 1, 보고서에 4관점 절 존재 | 4관점이 실질적으로 서술됐는가 | → `score_dispatch` 재채점 |
+| (추가) 출력 무결성 | LLM 서술에 구조화 출력 잔재(괄호 스팸, `}}` 뒤 영문)가 없는가 — 실제 실행에서 종합 LLM이 헛소리를 붙인 사례 대응 | — | `synthesize_report` 재생성 |
 
-규칙 4항목이 전부 PASS일 때만 Judge를 부르고, Judge 4항목이 모두 임계(4/5) 이상이면 통과입니다. Judge는 점수와 코멘트만 내고, 다음 노드는 `route_after_quality`(순수 함수)가 `quality_verdict`만 읽어 정합니다. 미달 사유는 `synthesis_feedback`으로 종합 프롬프트 끝에 붙습니다(Evaluator-Optimizer). 테스트: `tests/test_quality.py` (통과 / 금지 표현 주입 → 재생성 후 통과 / 항상 미달 → 2회 후 정상 종료).
+규칙(가이드 4항목 + 무결성)이 전부 PASS일 때만 Judge를 부르고, Judge 4항목이 모두 임계(4/5) 이상이면 통과입니다. Judge 입력에는 보고서 본문·인용 근거 발췌와 함께 채점·규칙 산출값(항목별 점수, TRL, 상충 수)을 넣어 정리형 수치가 추적되게 했습니다. Judge는 점수와 코멘트만 내고, 다음 노드는 `route_after_quality`(순수 함수)가 `quality_verdict`만 읽어 정합니다. 미달 사유는 `synthesis_feedback`으로 종합 프롬프트 끝에 붙습니다(Evaluator-Optimizer). 테스트: `tests/test_quality.py` (통과 / 금지 표현 주입 → 재생성 후 통과 / 항상 미달 → 2회 후 정상 종료).
 
 ---
 
@@ -184,7 +188,7 @@ flowchart TD
 │   ├── tools/                 # 논문 검색 · Tavily 웹 검색 · 원문 fetch
 │   ├── graph/                 # 계약(task_schema · state · reducers) + 이전 RAG 실습 그래프(main · dispatch)
 │   ├── config.py · llm.py · progress.py
-├── tests/                     # 95개 — test_plan · test_quality · test_orchestrator_state · test_orchestrator_runs + 기존
+├── tests/                     # 97개 — test_plan · test_quality · test_orchestrator_state · test_orchestrator_runs + 기존
 ├── eval/retrieval/            # 임베딩 모델 선정 (Hit@K · MRR)
 ├── docs/                      # architecture.md · main_graph_orchestrator.mmd · agent_assignment/ (과제 설계 문서 3종)
 ├── scripts/                   # download_corpus.py · draw_orchestrator_graph.py
@@ -201,7 +205,7 @@ uv sync                                   # 설치 (Python 3.11~3.12)
 cp .env.example .env                      # OPENAI_API_KEY, TAVILY_API_KEY, (선택) LANGSMITH_API_KEY, LANGSMITH_TRACING=true
 uv run python scripts/download_corpus.py  # 논문 PDF
 uv run python -m kv_eval.rag.index --model BAAI/bge-m3   # 인덱스
-uv run pytest                             # 95개 (KV_FAKE=1, 키 불필요)
+uv run pytest                             # 97개 (KV_FAKE=1, 키 불필요)
 ```
 
 ```bash
@@ -212,7 +216,7 @@ uv run python app_agent.py                          # 전체 18항목
 
 끝나면 run_id, 라운드별 fan-out 수, retry_round, quality_round, 품질 판정, status, PDF 쪽수를 출력하고
 `outputs/runs/<run_id>/`에 `report.md`, `report.pdf`, (10쪽 초과 시) `appendix.md`, `decision_log.jsonl`, `report_meta.json`,
-`evidence.json`, `scores.json`, `search_log.json`이 생깁니다. `KV_FAKE=1`을 붙이면 LLM·검색 없이 뼈대만 돕니다.
+`evidence.json`, `scores.json`, `search_log.json`, `info_gaps.json`, `final_assessment.json`, `trl_results.json`, `conflicts.json`이 생깁니다(마지막 세 개로 LLM 재호출 없이 보고서를 다시 조립할 수 있습니다). `KV_FAKE=1`을 붙이면 LLM·검색 없이 뼈대만 돕니다.
 
 ---
 
@@ -226,7 +230,7 @@ uv run python app_agent.py                          # 전체 18항목
 | 품질 평가 노드 | `orchestrator/quality.py`, `configs/quality.yaml`, `prompts/quality_judge.md`, `tests/test_quality.py` |
 | 코드 구조·모듈 분리 | `orchestrator/`(조정) vs `agents/`·`evidence/`·`rules/`(하위), 위 Directory Structure |
 | 실행 결과 재현성 | `uv run python app_agent.py` 1회로 PDF 생성, `report_meta.json`에 fan-out·라운드·쪽수, 무한 루프 없음 테스트 |
-| Output — 보고서 | `reporting/report.py`: SUMMARY → 1~9장 → REFERENCE, `finalize`가 10쪽 초과 시 부록 분리 |
+| Output — 보고서 | `reporting/report.py`: SUMMARY → 1~9장 → REFERENCE (2.4 비교 가능성 요약, 4.5/5.5 근거 프로필·핵심 수치, 8.3 실행 기록), `finalize`가 10쪽 초과 시 4단계 압축 |
 
 ---
 
