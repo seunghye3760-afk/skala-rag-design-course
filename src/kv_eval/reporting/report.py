@@ -98,7 +98,7 @@ def _representative_condition(state: MainState, tech_id: str, cid: str) -> str:
     return max(cands, key=lambda c: (sum(k in c for k in keys), -abs(len(c) - 70)))
 
 
-def _ch2(state: MainState, names: dict) -> list[str]:
+def _ch2(state: MainState, names: dict, assessment: dict | None = None) -> list[str]:
     tcfg = technologies_config()["technologies"]
     by_id = {t["tech_id"]: t for t in tcfg}
     L = ["## 2. 대상 기술 개요", ""]
@@ -115,24 +115,27 @@ def _ch2(state: MainState, names: dict) -> list[str]:
         L.append(f"| {names.get(tid, tid)} | {t.get('group', '?')} / {t.get('category', '?')} | "
                  f"{_brief_val(state, tid, 'kv_cache_구성')} | {_brief_val(state, tid, '처리_구조')} | "
                  f"{_brief_val(state, tid, '적용_한계')} |")
-    L += ["", "### 2.4 실험 근거 비교표 — 실험 조건이 다르면 '직접 비교 불가'", "",
-         "코드로 기계적 판정: 두 기술 모두 근거가 있고 조건(conditions) 문자열이 같으면 "
-         "'비교 가능', 근거는 있지만 조건이 다르면 '직접 비교 불가', 한쪽만 있으면 '정보 부족'.", "",
-         "조건 열은 '건수 · 대표 조건 1개'만 표시한다 (전체 조건 문자열은 부록 A·evidence.json).", "",
-         "| 항목 | TurboQuant 조건 | CXL-PNM 조건 | 판정 |", "|---|---|---|---|"]
-
-    def _cond_cell(conds: set[str], tid: str, cid: str) -> str:
-        if not conds:
-            return "(없음)"
-        return f"{len(conds)}건 · {_short(_representative_condition(state, tid, cid), 90)}"
-
+    comp = (assessment or {}).get("_comparability") or {}
+    L += ["", "### 2.4 실험 근거 비교표 — 두 기술의 수치를 같은 표에 놓고 읽어도 되는가", "",
+         "종합 단계(LLM)가 항목별로 두 기술 근거의 실험 조건(모델 크기·문맥 길이·하드웨어·정밀도)을 대조해 "
+         "'비교 가능 / 조건 차이 / 정보 부족' 중 하나로 판정하고 이유를 적는다. 조건 열은 근거 등급이 가장 높은 "
+         "근거의 조건 요약이며, 전체 조건 문자열은 evidence.json에 있다. 판정은 수치의 우열이 아니라 "
+         "비교 가능성에 대한 것이다.", "",
+         "| 항목 | TurboQuant 조건 (근거 수) | CXL-PNM 조건 (근거 수) | 판정 | 이유 |", "|---|---|---|---|---|"]
     for c in state["rubrics"]["criteria"]:
         cid = c["id"]
         a, b = _tech_conditions(state, "turboquant", cid), _tech_conditions(state, "cxl_pnm", cid)
         if not a and not b:
             continue
-        verdict = "정보 부족" if not a or not b else ("비교 가능" if a & b else "직접 비교 불가")
-        L.append(f"| {cid} | {_cond_cell(a, 'turboquant', cid)} | {_cond_cell(b, 'cxl_pnm', cid)} | {verdict} |")
+        row = comp.get(cid)
+        if row:
+            ta, tb, verdict, note = row["turboquant"], row["cxl_pnm"], row["verdict"], row["note"]
+        else:                                   # 종합 결과에 없으면 기계 규칙 (한쪽 없음 → 정보 부족)
+            ta = _representative_condition(state, "turboquant", cid) or "근거 없음"
+            tb = _representative_condition(state, "cxl_pnm", cid) or "근거 없음"
+            verdict = "정보 부족" if not a or not b else "조건 차이"
+            note = "종합 단계 판정 없음 — 조건 문자열 기준"
+        L.append(f"| {cid} | {_short(ta, 90)} ({len(a)}) | {_short(tb, 90)} ({len(b)}) | {verdict} | {_short(note, 110)} |")
     L.append("")
     return L
 
@@ -334,7 +337,7 @@ def synthesize_report(state: MainState) -> dict:
     L = [f"# {state['rubrics']['meta']['title']} — TurboQuant · CXL-PNM", ""]
     L += _summary(state_for_render, names, assessment)
     L += _ch1(state)
-    L += _ch2(state, names)
+    L += _ch2(state, names, assessment)
     L += _ch3(state)
     L += _tech_chapter(state_for_render, "turboquant", names, assessment, 4)
     L += _tech_chapter(state_for_render, "cxl_pnm", names, assessment, 5)

@@ -88,7 +88,7 @@ def check_groundedness(state: OrchestratorState, secs: dict[str, str]) -> tuple[
     allowed: list[str] = [json.dumps([c.get("rubric", {}) for c in state["rubrics"]["criteria"]], ensure_ascii=False)]
     for i in cited:
         if i in pool:
-            allowed += [pool[i].claim, pool[i].excerpt, pool[i].published_at or ""]
+            allowed += [pool[i].claim, pool[i].excerpt, pool[i].conditions or "", pool[i].published_at or ""]
     for r in state.get("final_results", []):
         allowed.append(r.rationale)
     allowed_nums = _numbers(" ".join(allowed))

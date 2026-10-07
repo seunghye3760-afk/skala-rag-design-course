@@ -10,6 +10,7 @@ final_assessment 반환 형식 (state.py의 MainState.final_assessment: dict, �
       "_cross": {"근거_대조": str, "트레이드오프": str, "상호보완_가능성": str},
       "_scenario": {"시나리오1": str, "시나리오2": str, "이해관계자_충돌": str, "도입_요인_장벽": str},
       "_overall": str,
+      "_comparability": {"<criterion_id>": {"verdict": "비교 가능|조건 차이|정보 부족", "turboquant": str, "cxl_pnm": str, "note": str}},
     }
 "_"로 시작하는 키는 tech_id(turboquant/cxl_pnm)와 겹치지 않게 하려는 구분자일 뿐이다.
 """
@@ -21,7 +22,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .. import progress
-from ..config import ROOT, runtime
+from ..config import ROOT
 from ..graph.state import MainState
 from ..graph.task_schema import ConflictCandidate, TechId
 
@@ -56,12 +57,69 @@ class _ScenarioGuidance(BaseModel):
     도입_요인_장벽: str
 
 
+Comparability = Literal["비교 가능", "조건 차이", "정보 부족"]
+
+
+class _ConditionComparison(BaseModel):
+    """2.4 실험 근거 비교표 한 행. 두 기술의 실험 조건(모델·문맥 길이·하드웨어·정밀도)을 대조한 판정."""
+    criterion_id: str
+    verdict: Comparability
+    turboquant_conditions: str = Field(description="TurboQuant 쪽 대표 조건 요약 1줄 (없으면 '근거 없음')")
+    cxl_pnm_conditions: str = Field(description="CXL-PNM 쪽 대표 조건 요약 1줄 (없으면 '근거 없음')")
+    note: str = Field(description="판정 이유 1문장. 어떤 조건(모델/문맥 길이/HW/정밀도)이 같거나 다른지 지목")
+
+
 class _Synthesis(BaseModel):
+    condition_comparisons: list[_ConditionComparison]
     conflicts: list[_ConflictInterpretation]
     tech_assessment: list[_TechAssessment]
     cross_comparison: _CrossComparison
     scenario_guidance: _ScenarioGuidance
     overall: str
+
+
+_GRADE_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3}
+
+
+def _conditions_of(state: MainState, tech_id: str, cid: str, limit: int = 4) -> list[str]:
+    """항목·기술별 실험 조건 문자열: 최고 등급 근거부터, 중복 제거, 최대 limit개."""
+    pool = [e for e in state.get("evidence_pool", []) if e.tech_id == tech_id and e.criterion_id == cid
+            and (e.conditions or "").strip()]
+    out: list[str] = []
+    for e in sorted(pool, key=lambda e: _GRADE_ORDER[e.evidence_grade]):
+        c = " ".join(e.conditions.split())[:160]
+        if c not in out:
+            out.append(c)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _condition_block(state: MainState) -> str:
+    rub = state["rubrics"]
+    lines = []
+    for c in rub["criteria"]:
+        cid = c["id"]
+        a, b = _conditions_of(state, "turboquant", cid), _conditions_of(state, "cxl_pnm", cid)
+        if not a and not b:
+            continue
+        lines.append(f"- {cid} {c['name']}\n  TurboQuant: {' | '.join(a) or '(근거 없음)'}\n"
+                     f"  CXL-PNM: {' | '.join(b) or '(근거 없음)'}")
+    return "\n".join(lines) or "(조건이 기록된 근거 없음)"
+
+
+def _fake_comparisons(state: MainState) -> dict:
+    """KV_FAKE: 기계 규칙(한쪽 없으면 정보 부족, 문자열 같으면 비교 가능, 아니면 조건 차이)."""
+    out = {}
+    for c in state["rubrics"]["criteria"]:
+        cid = c["id"]
+        a, b = _conditions_of(state, "turboquant", cid), _conditions_of(state, "cxl_pnm", cid)
+        if not a and not b:
+            continue
+        verdict = "정보 부족" if not a or not b else ("비교 가능" if set(a) & set(b) else "조건 차이")
+        out[cid] = {"verdict": verdict, "turboquant": a[0] if a else "근거 없음", "cxl_pnm": b[0] if b else "근거 없음",
+                    "note": "(FAKE) 문자열 대조"}
+    return out
 
 
 def _fake(state: MainState) -> dict:
@@ -74,6 +132,7 @@ def _fake(state: MainState) -> dict:
     assessment["_scenario"] = {"시나리오1": "(FAKE) 미구현", "시나리오2": "(FAKE) 미구현",
                                "이해관계자_충돌": "(FAKE) 미구현", "도입_요인_장벽": "(FAKE) 미구현"}
     assessment["_overall"] = "(FAKE) 미구현"
+    assessment["_comparability"] = _fake_comparisons(state)
     return {"conflicts": conflicts, "final_assessment": assessment}
 
 
@@ -116,15 +175,14 @@ def _build_messages(state: MainState) -> list[dict]:
         system += ("\n\n[이전 생성본의 품질 평가 미달 사유 — 이번 생성에서 반드시 고칠 것]\n" + str(feedback))
     names = {t["tech_id"]: t["name"] for t in state["technologies"]}
     user = "\n\n".join([_tech_block(state, t["tech_id"]) for t in state["technologies"]]
-                       + ["## 상충 후보", _conflict_block(state, names)])
+                       + ["## 상충 후보", _conflict_block(state, names),
+                          "## 항목별 실험 조건 (근거 등급 높은 순, 2.4 비교표 판정용)", _condition_block(state)])
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def _get_llm():
-    from langchain_openai import ChatOpenAI  # 무거운 라이브러리는 함수 안에서 import
-    rt = runtime()["llm"]
-    model = rt.get("model") or "gpt-4.1-mini"
-    return ChatOpenAI(model=model, temperature=rt.get("temperature", 0)).with_structured_output(_Synthesis)
+    from ..llm import chat_model   # 프로젝트 공용 (KV_LLM_MODEL 우선, gpt-5 계열 temperature 미지정, .env 키 우선)
+    return chat_model().with_structured_output(_Synthesis)
 
 
 def _apply(state: MainState, out: _Synthesis) -> dict:
@@ -143,6 +201,10 @@ def _apply(state: MainState, out: _Synthesis) -> dict:
     assessment["_cross"] = out.cross_comparison.model_dump()
     assessment["_scenario"] = out.scenario_guidance.model_dump()
     assessment["_overall"] = out.overall
+    assessment["_comparability"] = {
+        x.criterion_id: {"verdict": x.verdict, "turboquant": x.turboquant_conditions,
+                         "cxl_pnm": x.cxl_pnm_conditions, "note": x.note}
+        for x in getattr(out, "condition_comparisons", [])}   # 구버전 출력(테스트 FakeOut)에도 관대하게
     return {"conflicts": conflicts, "final_assessment": assessment}
 
 
