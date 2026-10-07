@@ -58,30 +58,60 @@ Agentic RAG 프로젝트입니다. 기술의 우열이나 순위를 판정하지
 - **Stakeholder Agent**: 공급자, 도입 기업, 운영자 등 이해관계자별 영향과 요구사항을 평가
 - **Domain Agent**: 비용, 에너지, 처리량, 지연시간, 품질 및 통합 난이도를 평가
 - **Synthesis Agent**: 관점별 결과와 상충 후보를 종합하고 최종 보고서를 생성
+- **Orchestrator**: 현재 루브릭과 재작업 대상을 구조화된 `TaskPlan`으로 만들고 Worker 수를 동적으로 결정
+- **Supervisor**: 근거 충분도·현재 단계·보고서 품질에 따라 다음 작업을 조건부 라우팅
+- **Report Quality Agent**: Groundedness·중립성·편향 통제·관점 커버리지를 Hybrid 방식으로 평가
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A[설정 및 루브릭 로드] --> B[기술 조사]
-    B --> C[근거 수집 작업 분배]
-    C --> D[항목별 근거 병렬 수집]
-    D --> E[관점별 평가 작업 분배]
-    E --> F1[TRL 평가]
-    E --> F2[시장성 평가]
-    E --> F3[이해관계자 평가]
-    E --> F4[도메인 평가]
-    F1 --> G[균형 및 형식 점검]
-    F2 --> G
-    F3 --> G
-    F4 --> G
-    G -->|재검색·재평가 필요| C
-    G -->|통과 또는 재시도 한도 도달| H[규칙 적용]
-    H --> I[결과 종합 및 보고서 생성]
+    A[설정·루브릭·기술 조사] --> P[Orchestrator: TaskPlan]
+    P -->|Send × N| W[Workers]
+    W --> J[Reducer / Join]
+    J --> B[근거·형식 점검]
+    B --> S[Supervisor]
+    S -->|근거 부족| P
+    S -->|충분| R[규칙 적용]
+    R --> S
+    S --> Y[보고서 초안]
+    Y --> Q[품질평가]
+    Q --> S
+    S -->|통과 또는 한도 소진| F[최종 Markdown·PDF]
 ```
 
-상세 그래프는 [`docs/main_graph.png`](docs/main_graph.png)와
-[`docs/architecture.md`](docs/architecture.md)에서 확인할 수 있습니다.
+### Pattern and state design
+
+- 제출 주 패턴은 **Orchestrator-Workers**이며 Supervisor는 그 위의 제어 계층입니다.
+- Worker는 서로 직접 통신하지 않고 결과를 reducer에 기록한 뒤 Supervisor로 돌아옵니다.
+- `TaskPlan`은 State에 저장되며 최초 실행과 재시도 모두 현재 State에서 동적으로 만들어집니다.
+- State는 Control, Planning, Domain payload, Report, Observability 레이어로 구분합니다.
+- 대용량 원문은 State에 넣지 않고 캐시·산출물 경로로 관리합니다.
+- Worker 오류는 `WorkerResult(status="failed")`로 바뀌어 다른 병렬 작업을 중단시키지 않습니다.
+- 검색/채점 재시도는 최대 2라운드, 보고서 수정은 최대 2회, Supervisor는 최대 12단계로 종료가 보장됩니다.
+- SQLite checkpointer와 `run_id == thread_id`를 사용해 중단된 실행을 재개할 수 있습니다.
+- 상세 실행 경로는 LangSmith에서 `run_id`, task ID, 노드 이름으로 추적합니다.
+
+### State Schema 설계 요약
+
+| 항목 | 설계 반영 내용 | 설계 이유 |
+|---|---|---|
+| **제어 vs 페이로드 분리** | State를 Control, Planning, Domain payload, Report, Observability 레이어로 나누고 라우팅 정보와 조사 결과를 분리했습니다. | Supervisor가 판단에 필요한 최소 제어 상태만 읽도록 하여 작업 결과와 실행 흐름이 서로 얽히지 않게 했습니다. |
+| **관측성 위치** | 현재 결정과 요약된 결정 이력은 State에 남기고, 노드별 상세 실행 과정과 판단 사유는 LangSmith trace에 기록합니다. | 재개에 필요한 정보는 보존하면서도 디버깅용 로그가 체크포인트를 과도하게 키우지 않도록 했습니다. |
+| **지속성 비용** | 원문 전체와 검색 페이지는 캐시·파일에 저장하고 State에는 구조화된 Evidence, 참조 ID, 결과 경로만 보관합니다. | 체크포인트마다 대용량 원문이 반복 저장되어 State가 무한히 증가하는 문제를 방지했습니다. |
+| **상관 관계** | 하나의 실행에서 `run_id`와 `thread_id`를 동일하게 사용하고, 개별 작업에는 고유 task ID를 부여합니다. | State, SQLite checkpoint, LangSmith trace, 실행 산출물을 같은 실행 단위로 연결할 수 있습니다. |
+| **재개·복구** | Worker의 성공·실패·시도 횟수를 구조화해 저장하고 SQLite checkpointer로 마지막 완료 노드 이후부터 실행을 재개합니다. | 일부 Worker가 실패하거나 프로세스가 중단되어도 완료된 작업을 처음부터 다시 수행하지 않도록 했습니다. |
+| **동시 처리** | Orchestrator가 만든 작업 수만큼 `Send`로 동적 fan-out하고, 병렬 결과는 reducer를 통해 누적·중복 제거·최신화합니다. | 여러 Worker가 동시에 같은 State 채널에 기록해도 결과가 덮어써지거나 유실되지 않도록 했습니다. |
+| **종료 보장** | 검색·채점은 최대 2라운드, 보고서 수정은 최대 2회, Supervisor는 최대 12단계로 제한하며 한도 소진 시 `completed_with_gaps`로 종료합니다. | 근거 부족이나 품질 미달이 계속되더라도 무한 루프 없이 남은 한계를 명시한 결과를 생성하도록 했습니다. |
+
+### Report quality loop
+
+보고서 파일은 초안 생성 직후 저장하지 않습니다. 코드 기반 검사와 LLM Judge가 Groundedness,
+중립성, 편향 통제, 4개 관점 커버리지를 평가한 뒤 Supervisor가 수정 또는 최종화를 선택합니다.
+수정 한도를 소진하면 `completed_with_gaps`로 종료하여 무한 루프를 방지합니다.
+
+상세 그래프는 [`docs/main_graph.mmd`](docs/main_graph.mmd)와
+[`docs/architecture.md`](docs/architecture.md)에서 확인할 수 있습니다. 기존 PNG는 이전 RAG 설계의 참고본입니다.
 
 ## Directory Structure
 
@@ -159,6 +189,7 @@ uv run python app.py --criteria TRL-1,MKT-2,DOM-4
 ```
 
 실행 결과는 `outputs/runs/<run_id>/`에 저장됩니다.
+같은 폴더의 `checkpoints.sqlite`에는 재개 가능한 LangGraph 체크포인트가 저장됩니다.
 
 > 현재 저장소는 FAKE 데이터를 사용해 전체 그래프의 실행 흐름을 검증할 수 있습니다.
 > 각 담당 영역의 실제 구현과 임베딩 선정 실험 결과는 순차적으로 반영합니다.

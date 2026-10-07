@@ -112,8 +112,12 @@ def _conflict_block(state: MainState, names: dict) -> str:
 def _build_messages(state: MainState) -> list[dict]:
     system = (ROOT / PROMPT_FILE).read_text(encoding="utf-8")
     names = {t["tech_id"]: t["name"] for t in state["technologies"]}
-    user = "\n\n".join([_tech_block(state, t["tech_id"]) for t in state["technologies"]]
-                       + ["## 상충 후보", _conflict_block(state, names)])
+    parts = [_tech_block(state, t["tech_id"]) for t in state["technologies"]]
+    parts += ["## 상충 후보", _conflict_block(state, names)]
+    quality = state.get("quality_evaluation")
+    if quality and quality.revision_hints:
+        parts += ["## 이전 초안 품질평가 수정 지시", "\n".join(f"- {x}" for x in quality.revision_hints)]
+    user = "\n\n".join(parts)
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 

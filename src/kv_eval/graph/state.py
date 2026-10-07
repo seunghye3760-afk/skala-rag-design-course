@@ -1,4 +1,4 @@
-"""Main State (설계서 D-2). 누적 키는 operator.add reducer로 병렬 결과를 합친다."""
+"""계층형 State. 병렬 쓰기 채널만 reducer로 합치고 제어/계획/보고서는 단일 노드가 갱신한다."""
 from __future__ import annotations
 
 import operator
@@ -6,12 +6,36 @@ from typing import Annotated, TypedDict
 
 from langgraph.graph.message import add_messages
 
-from .task_schema import ConflictCandidate, CriterionResult, Evidence, RetryTarget, TRLResult
+from .task_schema import (
+    ConflictCandidate,
+    CriterionResult,
+    Evidence,
+    QualityEvaluation,
+    RetryTarget,
+    SupervisorDecision,
+    TaskPlan,
+    TRLResult,
+    WorkerResult,
+)
 
 
-class MainState(TypedDict, total=False):
+class ControlState(TypedDict, total=False):
     run_id: str
     only_criteria: list[str]           # 작게 돌릴 때만 (app.py --criteria)
+    phase: str
+    supervisor_step: int
+    supervisor_decision: SupervisorDecision
+    decision_log: Annotated[list[SupervisorDecision], operator.add]
+    final_status: str
+
+
+class PlanningState(TypedDict, total=False):
+    task_plan: TaskPlan
+    plan_history: Annotated[list[TaskPlan], operator.add]
+    worker_results: Annotated[list[WorkerResult], operator.add]
+
+
+class DomainState(TypedDict, total=False):
     technologies: list[dict]
     domain: dict
     rubrics: dict
@@ -26,6 +50,19 @@ class MainState(TypedDict, total=False):
     final_results: list[CriterionResult]   # apply_rules가 상한·하한 적용 후 확정한 결과
     trl_results: list[TRLResult]
     conflicts: list[ConflictCandidate]
+
+
+class ReportState(TypedDict, total=False):
     final_assessment: dict
+    report_draft: str
+    quality_evaluation: QualityEvaluation
+    report_revision: int
     report_path: str
+
+
+class ObservabilityState(TypedDict, total=False):
     messages: Annotated[list, add_messages]
+
+
+class MainState(ControlState, PlanningState, DomainState, ReportState, ObservabilityState, total=False):
+    """그래프 전체 공개 State. 레이어별 소유권은 위 TypedDict로 구분한다."""

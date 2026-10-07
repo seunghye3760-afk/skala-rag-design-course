@@ -24,6 +24,11 @@ def _dump(path, items):
                                ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _dump_one(path, item):
+    value = item.model_dump() if hasattr(item, "model_dump") else item
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _names(state: MainState) -> dict:
     return {t["tech_id"]: t["name"] for t in state["technologies"]}
 
@@ -250,21 +255,10 @@ def _reference(state: MainState) -> list[str]:
     return L
 
 
-def synthesize_report(state: MainState) -> dict:
-    progress.step("synthesize_report", "종합 결과 정리 시작")
-    upd = synthesize(state)
-    run_dir = output_root() / state.get("run_id", "run")
-    run_dir.mkdir(parents=True, exist_ok=True)
-    _dump(run_dir / "evidence.json", state.get("evidence_pool", []))
-    _dump(run_dir / "scores.json", state.get("final_results", []))
-    _dump(run_dir / "search_log.json", state.get("search_log", []))
-    _dump(run_dir / "info_gaps.json", state.get("info_gaps", []))
-    progress.step("synthesize_report", "보고서 본문 조립 중")
-
+def _build_report_text(state: MainState, upd: dict) -> str:
     names = _names(state)
     assessment = upd["final_assessment"]
     state_for_render = {**state, "conflicts": upd["conflicts"]}
-
     L = [f"# {state['rubrics']['meta']['title']} — TurboQuant · CXL-PNM", ""]
     L += _summary(state_for_render, names, assessment)
     L += _ch1(state)
@@ -278,8 +272,30 @@ def synthesize_report(state: MainState) -> dict:
     L += _ch9(assessment)
     L += _appendix(state)
     L += _reference(state)
+    return "\n".join(L) + "\n"
 
-    text = "\n".join(L) + "\n"
+
+def synthesize_report(state: MainState) -> dict:
+    """초안만 State에 만든다. 품질평가 통과 전에는 최종 파일로 쓰지 않는다."""
+    progress.step("synthesize_report", "종합 결과 정리 시작")
+    upd = synthesize(state)
+    text = _build_report_text(state, upd)
+    return {**upd, "report_draft": text, "phase": "drafted"}
+
+
+def finalize_report(state: MainState) -> dict:
+    """Supervisor가 승인한 최신 초안을 실행 산출물로 기록한다."""
+    run_dir = output_root() / state.get("run_id", "run")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    _dump(run_dir / "evidence.json", state.get("evidence_pool", []))
+    _dump(run_dir / "scores.json", state.get("final_results", []))
+    _dump(run_dir / "search_log.json", state.get("search_log", []))
+    _dump(run_dir / "info_gaps.json", state.get("info_gaps", []))
+    _dump(run_dir / "task_plans.json", state.get("plan_history", []))
+    _dump(run_dir / "worker_results.json", state.get("worker_results", []))
+    _dump(run_dir / "supervisor_decisions.json", state.get("decision_log", []))
+    _dump_one(run_dir / "quality_evaluation.json", state.get("quality_evaluation", {}))
+    text = state["report_draft"]
     path = run_dir / "report.md"
     path.write_text(text, encoding="utf-8")
     progress.step("synthesize_report", f"report.md 생성 완료 ({path})")
@@ -294,4 +310,6 @@ def synthesize_report(state: MainState) -> dict:
     except Exception as e:  # noqa: BLE001 — PDF 실패로 그래프 전체를 죽이지 않는다
         progress.step("synthesize_report", f"report.pdf 생성 실패, report.md만 유지: {type(e).__name__}: {e}")
 
-    return {**upd, "report_path": str(path)}
+    quality = state.get("quality_evaluation")
+    status = "completed" if quality and quality.passed else "completed_with_gaps"
+    return {"report_path": str(path), "final_status": status, "phase": "finalized"}

@@ -153,10 +153,12 @@ def balance_check(state: MainState) -> dict:
     rnd = state.get("retry_round", 0)
     if issues and rnd < runtime()["retry"]["max_rounds"]:
         progress.step("balance_check", f"문제 {len(issues)}건 발견 → {rnd + 1}라운드 재시도")
-        return {"balance_issues": issues, "retry_targets": issues, "retry_round": rnd + 1}
+        return {"balance_issues": issues, "retry_targets": issues, "retry_round": rnd + 1,
+                "phase": "reviewed"}
     progress.step("balance_check", f"문제 {len(issues)}건"
                   + (" — 재시도 한도 소진, info_gaps로 기록" if issues else " — 통과"))
-    return {"balance_issues": issues, "retry_targets": [], "info_gaps": issues}
+    return {"balance_issues": issues, "retry_targets": [], "info_gaps": issues,
+            "phase": "reviewed"}
 
 
 def route_after_balance(state: MainState) -> str:

@@ -5,6 +5,7 @@ description = "KV cache 최적화 기술(TurboQuant·CXL-PNM) 다관점 평가 A
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "langgraph>=0.3",
+    "langgraph-checkpoint-sqlite>=3.0",
     "langchain-core>=0.3",
     "langchain-openai>=0.2",
     "pydantic>=2.7",

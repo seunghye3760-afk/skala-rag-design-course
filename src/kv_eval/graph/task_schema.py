@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,7 +17,12 @@ AgentType = Literal["trl", "market", "stakeholder", "domain"]
 Grade = Literal["A", "B", "C", "D"]
 Stance = Literal["pro", "con"]
 Confidence = Literal["high", "medium", "low"]
-Score = Union[int, Literal["NA"]]
+Score = int | Literal["NA"]
+WorkKind = Literal["collect", "score"]
+WorkerStatus = Literal["completed", "failed", "excluded"]
+SupervisorAction = Literal[
+    "plan_collect", "plan_score", "apply_rules", "synthesize", "evaluate", "revise", "finalize"
+]
 
 
 def cell_key(tech_id: str, criterion_id: str) -> str:
@@ -119,6 +124,60 @@ class ScoreTask(BaseModel):
     evidence: list[Evidence]           # 누적 근거 (모든 round, 중복 제거)
     tech_brief: dict = Field(default_factory=dict)   # 배경 참고용, 근거로 쓰지 않음
     round: int = 0
+
+
+class WorkItem(BaseModel):
+    """Orchestrator가 만든 동적 작업 계획의 최소 단위."""
+    task_id: str
+    kind: WorkKind
+    tech_id: TechId
+    criterion_ids: list[str]
+    agent_type: AgentType | None = None
+    objective: str
+    success_criteria: list[str] = Field(default_factory=list)
+    rewrite_hint: str | None = None
+    attempt: int = 0
+    max_attempts: int = 2
+
+
+class TaskPlan(BaseModel):
+    phase: Literal["collect", "score"]
+    round: int
+    rationale: str
+    items: list[WorkItem]
+
+
+class WorkerResult(BaseModel):
+    task_id: str
+    kind: WorkKind
+    status: WorkerStatus
+    attempt: int
+    output_count: int = 0
+    error_type: str | None = None
+    error_message: str | None = None
+
+
+class SupervisorDecision(BaseModel):
+    step: int
+    action: SupervisorAction
+    reason: str
+    target_task_ids: list[str] = Field(default_factory=list)
+
+
+class QualityDimension(BaseModel):
+    passed: bool
+    score: int = Field(ge=1, le=5)
+    reason: str
+
+
+class QualityEvaluation(BaseModel):
+    groundedness: QualityDimension
+    neutrality: QualityDimension
+    bias_control: QualityDimension
+    perspective_coverage: QualityDimension
+    passed: bool
+    revision_hints: list[str] = Field(default_factory=list)
+    checks: dict[str, Any] = Field(default_factory=dict)
 
 
 class TRLResult(BaseModel):

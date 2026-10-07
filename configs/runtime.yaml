@@ -27,4 +27,9 @@ retry:
   max_rounds: 2        # 균형 점검 재시도 최대 라운드 (retry_round)
   query_rewrite_max: 1 # 수집 단계 쿼리 재작성 (항목당)
 
+orchestration:
+  worker_max_attempts: 2
+  supervisor_max_steps: 12
+  report_revision_max: 2
+
 cache_dir: .cache      # 검색 캐시 (재현성·API 사용량 절감)
