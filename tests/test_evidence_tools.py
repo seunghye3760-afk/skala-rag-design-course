@@ -155,9 +155,16 @@ def _task(evidence_sources=("웹: 독립 벤치마크",)):
 
 
 def _item(**over):
-    base = dict(claim="Llama-70B 128K에서 동시 세션 1.8배", excerpt="동시 세션 수가 1.8배 늘었다.",
-                stance="pro", source_type="독립 벤치마크", measurement_type="실측",
-                is_independent=True, conditions="Llama-70B, 128K, batch 32", relevant=True)
+    base = {
+        "claim": "Llama-70B 128K에서 동시 세션 1.8배",
+        "excerpt": "동시 세션 수가 1.8배 늘었다.",
+        "stance": "pro",
+        "source_type": "독립 벤치마크",
+        "measurement_type": "실측",
+        "is_independent": True,
+        "conditions": "Llama-70B, 128K, batch 32",
+        "relevant": True,
+    }
     return _Item(**{**base, **over})
 
 
@@ -261,7 +268,7 @@ def test_collect_failed_when_search_execution_fails(monkeypatch):
 
 
 def test_collect_rag_failure_falls_back_to_web(real_collect, monkeypatch):
-    import kv_eval.tools.paper_search as paper_search
+    from kv_eval.tools import paper_search
 
     def broken(query, k=5, doc_ids=None):
         raise RuntimeError("인덱스 미구축")
@@ -325,9 +332,8 @@ def test_regrade_stays_d_without_primary_url(monkeypatch):
 
 
 def test_collect_rag_filters_by_tech_and_fills_published(real_collect, monkeypatch):
-    import kv_eval.tools.paper_search as paper_search
-
     from kv_eval.graph.task_schema import Chunk, Locator
+    from kv_eval.tools import paper_search
 
     seen = []
 

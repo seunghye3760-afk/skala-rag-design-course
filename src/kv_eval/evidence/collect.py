@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -25,6 +25,10 @@ from ..tools.web_search import cache_file
 from .grading import grade
 
 _GRADE_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3}
+
+
+def _today() -> str:
+    return datetime.now(UTC).date().isoformat()
 
 
 class _Item(BaseModel):
@@ -94,7 +98,7 @@ def collect_evidence(task: CollectTask) -> dict:
 
     log = [{"tech_id": tech_id, "criterion_id": cid, "round": task.round, "queries": queries,
             "results": len(evidence), "rewritten": rewritten, "status": status,
-            "errors": errors, "searched_at": date.today().isoformat()}]
+            "errors": errors, "searched_at": _today()}]
     progress.step("collect_evidence", f"{tech_id} {cid} 완료 — 근거 {len(evidence)}건"
                   + (" (쿼리 재작성함)" if rewritten else ""))
     return {"evidence_pool": evidence, "search_log": log, "worker_results": [worker_result]}
@@ -266,7 +270,7 @@ def _to_evidence(task: CollectTask, items: list[_Item], offset: int, *, source_t
             evidence_id=f"{tech_id}-{cid}-r{task.round}-{offset + i}",
             tech_id=tech_id, criterion_id=cid, claim=item.claim,
             source_title=source_title, source_url=source_url, publisher=publisher,
-            published_at=published_at, accessed_at=date.today().isoformat(),
+            published_at=published_at, accessed_at=_today(),
             source_type=src_type, evidence_grade=grade(src_type, item.measurement_type,
                                                         item.is_independent, cited),
             stance=item.stance, measurement_type=item.measurement_type, conditions=item.conditions,
@@ -312,7 +316,7 @@ def fake_evidence(task: CollectTask) -> list[Evidence]:
         out.append(Evidence(
             evidence_id=eid, tech_id=tech_id, criterion_id=cid, claim=f"[FAKE] {stance} 근거",
             source_title=f"FAKE SOURCE ({stance})", source_url=None, publisher="FAKE",
-            accessed_at=date.today().isoformat(),
+            accessed_at=_today(),
             source_type="FAKE", evidence_grade="C", stance=stance, measurement_type="FAKE",
             excerpt="FAKE", locator=Locator(doc_id="FAKE"), round=task.round))
     return out

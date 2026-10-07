@@ -132,6 +132,49 @@ def test_eleven_pages_is_compressed_then_passes(monkeypatch):
     assert persisted == [9]
 
 
+def test_quality_failure_is_rewritten_then_passes(monkeypatch):
+    persisted = []
+    invalid = _valid_draft().replace("## 6. 한계와 정보 공백", "### 검토 메모")
+
+    def rewrite(state):
+        return {
+            "report_draft": _valid_draft(),
+            "report_retry_round": state["report_retry_round"] + 1,
+            "report_page_count": 0,
+        }
+
+    monkeypatch.setattr(report_mod, "rewrite_report", rewrite)
+    monkeypatch.setattr(report_mod, "render_preview", lambda state: _preview_result(9))
+    monkeypatch.setattr(report_mod, "persist_report",
+                        lambda state: persisted.append(True) or {"report_path": "report.md"})
+
+    out = report_mod.finalize_report(_state(invalid))
+
+    assert out["report_quality"].passed is True
+    assert out["report_retry_round"] == 1
+    assert persisted == [True]
+
+
+def test_quality_rewrite_loop_stops_after_shared_retry_limit(monkeypatch):
+    persisted = []
+    invalid = _valid_draft().replace("## 6. 한계와 정보 공백", "### 검토 메모")
+
+    def rewrite(state):
+        return {"report_retry_round": state["report_retry_round"] + 1}
+
+    monkeypatch.setattr(report_mod, "rewrite_report", rewrite)
+    monkeypatch.setattr(report_mod, "persist_report",
+                        lambda state: persisted.append(True) or {"report_path": "report.md"})
+
+    out = report_mod.finalize_report(_state(invalid))
+
+    assert out["report_quality"].passed is False
+    assert out["report_quality"].retry_kind is None
+    assert out["report_retry_round"] == 2
+    assert any("재시도 한도" in issue for issue in out["report_quality"].issues)
+    assert persisted == [] and "report_path" not in out
+
+
 def test_report_fails_after_maximum_compression_rounds(monkeypatch):
     persisted = []
     monkeypatch.setattr(report_mod, "render_preview", lambda state: _preview_result(11))

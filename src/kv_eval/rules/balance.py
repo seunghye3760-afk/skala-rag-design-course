@@ -113,7 +113,7 @@ def find_issues(state: MainState) -> list[RetryTarget]:
             ev_by_id = {e.evidence_id: e for e in ev}
             pro = [e for e in ev if e.stance == "pro"]
             con = [e for e in ev if e.stance == "con"]
-            target = dict(tech_id=tid, criterion_id=cid)
+            target = {"tech_id": tid, "criterion_id": cid}
 
             if not ev:
                 issues.append(RetryTarget(**target, kind="research", reason="근거 공백: 관련 근거 0건",

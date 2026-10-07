@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,7 +17,7 @@ AgentType = Literal["trl", "market", "stakeholder", "domain"]
 Grade = Literal["A", "B", "C", "D"]
 Stance = Literal["pro", "con"]
 Confidence = Literal["high", "medium", "low"]
-Score = Union[int, Literal["NA"]]
+Score = int | Literal["NA"]
 
 
 def cell_key(tech_id: str, criterion_id: str) -> str:

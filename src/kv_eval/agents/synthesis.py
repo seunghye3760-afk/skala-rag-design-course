@@ -124,6 +124,12 @@ def _build_messages(state: MainState) -> list[dict]:
     names = {t["tech_id"]: t["name"] for t in state["technologies"]}
     user = "\n\n".join([_tech_block(state, t["tech_id"]) for t in state["technologies"]]
                        + ["## 상충 후보", _conflict_block(state, names)])
+    quality = state.get("report_quality")
+    if quality and quality.issues:
+        feedback = "\n".join(f"- {issue}" for issue in quality.issues)
+        user += ("\n\n## 이전 보고서 품질 오류\n"
+                 "아래 오류를 고치되 근거에 없는 사실이나 수치를 추가하지 않는다.\n"
+                 f"{feedback}")
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 

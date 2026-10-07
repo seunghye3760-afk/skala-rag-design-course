@@ -1,6 +1,6 @@
 """synthesize(): KV_FAKE 경로 + 실제 LLM 출력 매핑. 담당 4."""
 from kv_eval.agents import synthesis as syn_mod
-from kv_eval.graph.task_schema import ConflictCandidate
+from kv_eval.graph.task_schema import ConflictCandidate, ReportQualityResult
 
 
 def _state():
@@ -23,6 +23,20 @@ def test_fake_path(monkeypatch):
     a = out["final_assessment"]
     assert a["turboquant"]["요약"] == "(FAKE) 미구현"
     assert "_cross" in a and "_scenario" in a and "_overall" in a
+
+
+def test_report_quality_feedback_is_added_to_rewrite_prompt():
+    state = _state()
+    state["report_quality"] = ReportQualityResult(
+        passed=False,
+        issues=["금지된 표현: 단정적 우열"],
+        retry_kind="rewrite",
+    )
+
+    messages = syn_mod._build_messages(state)
+
+    assert "이전 보고서 품질 오류" in messages[1]["content"]
+    assert "금지된 표현: 단정적 우열" in messages[1]["content"]
 
 
 def test_real_path_maps_llm_output(monkeypatch):

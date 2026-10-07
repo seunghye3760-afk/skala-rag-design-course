@@ -250,6 +250,19 @@ def synthesize_draft(state: MainState) -> dict:
     }
 
 
+def rewrite_report(state: MainState) -> dict:
+    """품질 오류를 Synthesizer에 전달해 초안만 다시 만들고 공통 재시도 횟수를 올린다."""
+    progress.step("rewrite_report", "품질 오류를 반영해 보고서 초안 재작성")
+    synthesis_update = synthesize(state)
+    rendering_state = {**state, **synthesis_update}
+    return {
+        **synthesis_update,
+        "report_draft": build_report(rendering_state),
+        "report_retry_round": state.get("report_retry_round", 0) + 1,
+        "report_page_count": 0,
+    }
+
+
 def persist_report(state: MainState) -> dict:
     """10페이지 제한을 통과한 preview와 JSON 상세 결과만 최종 저장한다."""
     quality = state.get("report_quality")
@@ -283,11 +296,22 @@ def _report_updates(state: MainState) -> dict:
 def finalize_report(state: MainState) -> dict:
     """품질·페이지 제한을 통과할 때만 최종 파일을 확정한다."""
     current = dict(state)
-    current.update(evaluate_report(current))
-    if not current["report_quality"].passed:
-        return _report_updates(current)
-
     while True:
+        current.update(evaluate_report(current))
+        quality = current["report_quality"]
+        if not quality.passed:
+            if quality.retry_kind != "rewrite":
+                return _report_updates(current)
+            if current.get("report_retry_round", 0) >= MAX_COMPRESSION_ROUNDS:
+                issues = [*quality.issues, "보고서 재작성·압축 재시도 한도(2) 소진"]
+                current["report_quality"] = quality.model_copy(update={
+                    "issues": issues,
+                    "retry_kind": None,
+                })
+                return _report_updates(current)
+            current.update(rewrite_report(current))
+            continue
+
         current.update(render_preview(current))
         quality = current["report_quality"]
         if quality.passed:
@@ -299,9 +323,6 @@ def finalize_report(state: MainState) -> dict:
             current.update(compress_report(current))
             return _report_updates(current)
         current.update(compress_report(current))
-        current.update(evaluate_report(current))
-        if not current["report_quality"].passed:
-            return _report_updates(current)
 
 
 def synthesize_report(state: MainState) -> dict:
