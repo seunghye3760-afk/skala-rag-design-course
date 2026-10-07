@@ -1,18 +1,27 @@
 """누적된 결과에서 '지금 쓸 값'을 고르는 규칙 (설계서 D-2 주석).
 
 - 근거(evidence_pool): 모든 round를 합치고 중복 제거해서 쓴다.
-- 채점(criterion_results): (기술, 항목)별 최신 round만 쓴다.
+- 채점(criterion_results): (기술, 항목)별 최신 결과를 쓰되, 후속 Worker 실패가 만든
+  NA fallback은 이전의 유효한 점수를 지우지 않는다.
 """
 from __future__ import annotations
 
-from .task_schema import CriterionResult, Evidence, cell_key
+from .task_schema import CriterionResult, Evidence, WorkerResult, cell_key
+from .worker_results import failed_score_cells
 
 
-def latest_results(results: list[CriterionResult]) -> dict[str, CriterionResult]:
+def latest_results(
+    results: list[CriterionResult], worker_results: list[WorkerResult] | None = None
+) -> dict[str, CriterionResult]:
+    failed = failed_score_cells(worker_results or [])
     out: dict[str, CriterionResult] = {}
     for r in results:
         k = cell_key(r.tech_id, r.criterion_id)
-        if k not in out or r.round >= out[k].round:
+        previous = out.get(k)
+        is_failed_fallback = (r.round, r.tech_id, r.agent_type, r.criterion_id) in failed
+        if is_failed_fallback and previous is not None and previous.score != "NA":
+            continue
+        if previous is None or r.round >= previous.round:
             out[k] = r
     return out
 

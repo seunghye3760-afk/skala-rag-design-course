@@ -189,6 +189,8 @@ def test_collect_builds_graded_evidence(real_collect, monkeypatch):
     log = out["search_log"][0]
     assert log["results"] == 2 and log["rewritten"] is False
     assert log["queries"]["pro"] == ["TurboQuant throughput improvement"]
+    worker = out["worker_results"][0]
+    assert worker.status == "completed" and worker.produced_count == 2
 
 
 def test_collect_dedupes_same_source_same_claim(real_collect, monkeypatch):
@@ -217,6 +219,45 @@ def test_collect_zero_results_rewrites_once_then_na(monkeypatch):
     assert len(rewrites) == 1                             # 재작성은 1회만
     assert out["search_log"][0]["rewritten"] is True
     assert out["search_log"][0]["queries"]["pro"] == ["broader query"]
+    worker = out["worker_results"][0]
+    assert worker.status == "completed" and worker.produced_count == 0
+    assert worker.retryable is False and worker.error is None
+
+
+def test_collect_partial_when_one_url_fails(real_collect, monkeypatch):
+    monkeypatch.setattr(web_search, "search", lambda q, max_results=5: [
+        {"url": "https://a.com/good"}, {"url": "https://a.com/broken"},
+    ])
+
+    def fetch(url):
+        if url.endswith("broken"):
+            raise RuntimeError("원문 접근 실패")
+        return {"url": url, "title": "실측기", "text": "본문",
+                "publisher": "ExampleLab", "published_at": "2026-02-03"}
+
+    monkeypatch.setattr(open_source, "fetch", fetch)
+    monkeypatch.setattr(collect_mod, "_extract", lambda task, text, hint_source: [_item()])
+
+    out = collect_evidence(_task())
+
+    worker = out["worker_results"][0]
+    assert len(out["evidence_pool"]) == 1
+    assert worker.status == "partial" and worker.produced_count == 1
+    assert worker.retryable is True and "원문 접근 실패" in worker.error
+
+
+def test_collect_failed_when_search_execution_fails(monkeypatch):
+    monkeypatch.setenv("KV_FAKE", "0")
+    monkeypatch.setattr(web_search, "search",
+                        lambda q, max_results=5: (_ for _ in ()).throw(RuntimeError("검색 장애")))
+    task = _task().model_copy(update={"query_rewrite_count": 1})
+
+    out = collect_evidence(task)
+
+    worker = out["worker_results"][0]
+    assert out["evidence_pool"] == []
+    assert worker.status == "failed" and worker.produced_count == 0
+    assert worker.retryable is True and "검색 장애" in worker.error
 
 
 def test_collect_rag_failure_falls_back_to_web(real_collect, monkeypatch):
@@ -228,8 +269,10 @@ def test_collect_rag_failure_falls_back_to_web(real_collect, monkeypatch):
     monkeypatch.setattr(paper_search, "search", broken)
     monkeypatch.setattr(collect_mod, "_extract", lambda task, text, hint_source: [_item()])
     # evidence_sources에 RAG 포함 + 논문 검색 실패(인덱스 미구축 등) → 웹 근거만으로 진행
-    pool = collect_evidence(_task(evidence_sources=("RAG: 논문", "웹: 벤치마크")))["evidence_pool"]
+    out = collect_evidence(_task(evidence_sources=("RAG: 논문", "웹: 벤치마크")))
+    pool = out["evidence_pool"]
     assert len(pool) == 1 and pool[0].source_url == "https://a.com/1"
+    assert out["worker_results"][0].status == "partial"
 
 
 # ---------- 재분류 확인 게이트 (설계서 C-4: 원문을 확인하면 재분류, 미확인은 D) ----------

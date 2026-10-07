@@ -22,8 +22,9 @@ import os
 import traceback
 
 from .. import progress
-from ..graph.task_schema import CriterionResult, ScoreTask
 from ..config import rubrics
+from ..graph.task_schema import CriterionResult, ScoreTask, WorkerResult
+from ..graph.worker_results import score_task_id
 from . import domain, market, stakeholder, trl
 from ._fake import fake_scores
 
@@ -61,12 +62,20 @@ def _force_intra_conflict(results: list[CriterionResult]) -> list[CriterionResul
 
 def score_task(task: ScoreTask) -> dict:
     if os.getenv("KV_FAKE") == "1":
-        return {"criterion_results": fake_scores(task)}
+        results = fake_scores(task)
+        return {
+            "criterion_results": results,
+            "worker_results": [WorkerResult(
+                task_id=score_task_id(task), kind="score", status="completed",
+                produced_count=len(results),
+            )],
+        }
 
     rub = rubrics()
     agent = AGENTS[task.agent_type]
     progress.step("score_task", f"{task.tech['tech_id']} {task.agent_type} "
                   f"({', '.join(task.criterion_ids)}) 시작")
+    final_error: Exception | None = None
     try:
         results = agent.score(task, rub)
     except Exception:  # noqa: BLE001 — 설계서 D-10: 형식 오류 시 즉시 1회 재요청 (에이전트별 예외 타입 불명)
@@ -75,5 +84,15 @@ def score_task(task: ScoreTask) -> dict:
         try:
             results = agent.score(task, rub)
         except Exception as e2:  # noqa: BLE001
+            final_error = e2
             results = _fallback(task, e2)
-    return {"criterion_results": _force_intra_conflict(results)}
+    results = _force_intra_conflict(results)
+    worker_result = WorkerResult(
+        task_id=score_task_id(task),
+        kind="score",
+        status="failed" if final_error else "completed",
+        produced_count=0 if final_error else len(results),
+        retryable=final_error is not None,
+        error=(f"{type(final_error).__name__}: {final_error}" if final_error else None),
+    )
+    return {"criterion_results": results, "worker_results": [worker_result]}

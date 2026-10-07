@@ -13,7 +13,9 @@ from .trl_gate import compute_trl
 def apply_rules(state: MainState) -> dict:
     progress.step("apply_rules", "상한·하한 적용, TRL 산출, 상충 후보 추출 시작")
     pool = state.get("evidence_pool", [])
-    latest = latest_results(state.get("criterion_results", []))
+    latest = latest_results(
+        state.get("criterion_results", []), state.get("worker_results", [])
+    )
     finals = {k: apply_caps(r, evidence_for(pool, r.tech_id, r.criterion_id)) for k, r in latest.items()}
     trl_ids = state["rubrics"]["agents"]["trl"]["criteria"]
     trl_results, conflicts = [], []

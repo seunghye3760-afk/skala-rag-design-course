@@ -22,6 +22,7 @@ from ..config import criteria_list, runtime
 from ..graph.reducers import evidence_for, latest_results
 from ..graph.state import MainState
 from ..graph.task_schema import CriterionResult, Evidence, RetryTarget, cell_key
+from ..graph.worker_results import retry_targets_from_workers
 
 _NUM_RE = re.compile(r"\d[\d,.]*")
 _SCORE_MENTION_RE = re.compile(r"\d+\s*점")     # "3점"/"4점" 같은 점수 언급은 근거 수치가 아니다
@@ -97,9 +98,13 @@ def _intra_conflict_missing(r: CriterionResult, ev_by_id: dict[str, Evidence]) -
 
 
 def find_issues(state: MainState) -> list[RetryTarget]:
-    latest = latest_results(state.get("criterion_results", []))
+    latest = latest_results(
+        state.get("criterion_results", []), state.get("worker_results", [])
+    )
     pool = state.get("evidence_pool", [])
-    issues: list[RetryTarget] = []
+    issues = retry_targets_from_workers(
+        state.get("worker_results", []), state.get("retry_round", 0)
+    )
     for t in state["technologies"]:
         for c in criteria_list(state["rubrics"], state.get("only_criteria")):
             tid, cid = t["tech_id"], c["id"]
@@ -145,7 +150,11 @@ def find_issues(state: MainState) -> list[RetryTarget]:
             elif _intra_conflict_missing(r, ev_by_id):
                 issues.append(RetryTarget(**target, kind="rescore",
                                           reason="형식 오류: 상반된 B등급 이상 근거인데 intra_conflict=false"))
-    return issues
+    deduped: dict[tuple[str, str, str], RetryTarget] = {}
+    for issue in issues:
+        key = (issue.tech_id, issue.criterion_id, issue.kind)
+        deduped.setdefault(key, issue)
+    return list(deduped.values())
 
 
 def balance_check(state: MainState) -> dict:

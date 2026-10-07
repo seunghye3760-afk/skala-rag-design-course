@@ -17,6 +17,7 @@ def test_kv_fake_bypasses_real_agent(monkeypatch):
     assert calls == []                      # 진짜 에이전트는 호출되지 않는다
     assert len(out["criterion_results"]) == 2
     assert all(r.rationale == "[FAKE] 미구현" for r in out["criterion_results"])
+    assert out["worker_results"][0].status == "completed"
 
 
 def test_success_on_first_try(monkeypatch):
@@ -28,6 +29,29 @@ def test_success_on_first_try(monkeypatch):
         "score": staticmethod(lambda t, rub, _r=[good]: _r.pop())})()})
     out = st_mod.score_task(task)
     assert out["criterion_results"] == good
+    worker = out["worker_results"][0]
+    assert worker.status == "completed" and worker.produced_count == 2
+
+
+def test_na_result_is_a_completed_worker_result(monkeypatch):
+    monkeypatch.delenv("KV_FAKE", raising=False)
+    task = _task()
+    na_results = [
+        CriterionResult(
+            tech_id="turboquant", criterion_id=cid, agent_type="market", score="NA",
+            rationale="공개 근거 부족", confidence="low",
+        )
+        for cid in task.criterion_ids
+    ]
+    monkeypatch.setattr(st_mod, "AGENTS", {"market": type("M", (), {
+        "score": staticmethod(lambda t, rub: na_results),
+    })()})
+
+    out = st_mod.score_task(task)
+
+    assert all(result.score == "NA" for result in out["criterion_results"])
+    worker = out["worker_results"][0]
+    assert worker.status == "completed" and worker.error is None
 
 
 def test_retries_once_then_succeeds(monkeypatch):
@@ -46,6 +70,7 @@ def test_retries_once_then_succeeds(monkeypatch):
     monkeypatch.setattr(st_mod, "AGENTS", {"market": type("M", (), {"score": staticmethod(flaky)})()})
     out = st_mod.score_task(task)
     assert calls["n"] == 2 and out["criterion_results"] == good
+    assert out["worker_results"][0].status == "completed"
 
 
 def test_falls_back_to_na_after_second_failure(monkeypatch):
@@ -62,3 +87,6 @@ def test_falls_back_to_na_after_second_failure(monkeypatch):
     assert calls["n"] == 2                  # 1회 재요청까지만, 무한 재시도 아님
     assert len(out["criterion_results"]) == 2
     assert all(r.score == "NA" and r.confidence == "low" for r in out["criterion_results"])
+    worker = out["worker_results"][0]
+    assert worker.status == "failed" and worker.produced_count == 0
+    assert worker.retryable is True and "계속 실패" in worker.error

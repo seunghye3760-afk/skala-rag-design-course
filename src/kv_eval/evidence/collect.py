@@ -18,7 +18,8 @@ from pydantic import BaseModel
 
 from .. import progress
 from ..config import runtime, uses_rag
-from ..graph.task_schema import Chunk, CollectTask, Evidence, Locator
+from ..graph.task_schema import Chunk, CollectTask, Evidence, Locator, WorkerResult
+from ..graph.worker_results import collect_task_id
 from ..tools import open_source, web_search
 from ..tools.web_search import cache_file
 from .grading import grade
@@ -61,21 +62,42 @@ def collect_evidence(task: CollectTask) -> dict:
     queries = _build_queries(task)
 
     if os.getenv("KV_FAKE") == "1":
-        evidence, rewritten = fake_evidence(task), False
+        evidence, rewritten, errors = fake_evidence(task), False, []
     else:
-        evidence = _collect_once(task, queries)
+        evidence, errors = _collect_once(task, queries)
         rewritten = False
         if not evidence and task.query_rewrite_count < runtime()["retry"]["query_rewrite_max"]:
-            queries = _rewrite_queries(task, queries)
-            evidence = _collect_once(task, queries)
-            rewritten = True
+            try:
+                queries = _rewrite_queries(task, queries)
+                rewritten = True
+            except Exception as error:  # noqa: BLE001 - 외부 LLM 호출 실패를 Worker 결과로 변환
+                errors.append(_error("query rewrite", error))
+            else:
+                evidence, retry_errors = _collect_once(task, queries)
+                errors.extend(retry_errors)
         evidence = _dedupe(evidence)
 
+    if evidence and errors:
+        status = "partial"
+    elif errors:
+        status = "failed"
+    else:
+        status = "completed"
+    worker_result = WorkerResult(
+        task_id=collect_task_id(task),
+        kind="collect",
+        status=status,
+        produced_count=len(evidence),
+        retryable=bool(errors),
+        error="; ".join(errors) or None,
+    )
+
     log = [{"tech_id": tech_id, "criterion_id": cid, "round": task.round, "queries": queries,
-            "results": len(evidence), "rewritten": rewritten, "searched_at": date.today().isoformat()}]
+            "results": len(evidence), "rewritten": rewritten, "status": status,
+            "errors": errors, "searched_at": date.today().isoformat()}]
     progress.step("collect_evidence", f"{tech_id} {cid} 완료 — 근거 {len(evidence)}건"
                   + (" (쿼리 재작성함)" if rewritten else ""))
-    return {"evidence_pool": evidence, "search_log": log}
+    return {"evidence_pool": evidence, "search_log": log, "worker_results": [worker_result]}
 
 
 def _build_queries(task: CollectTask) -> dict:
@@ -85,31 +107,53 @@ def _build_queries(task: CollectTask) -> dict:
             for stance, tpl in task.criterion["queries"].items()}
 
 
-def _collect_once(task: CollectTask, queries: dict) -> list[Evidence]:
+def _error(action: str, error: Exception) -> str:
+    return f"{action}: {type(error).__name__}: {error}"
+
+
+def _collect_once(task: CollectTask, queries: dict) -> tuple[list[Evidence], list[str]]:
     max_results = runtime()["web_search"]["max_results"]
     out: list[Evidence] = []
+    errors: list[str] = []
 
     if uses_rag(task.criterion):
         from ..tools import paper_search
 
-        for chunk in _search_papers(task, queries):
-            out.extend(_to_evidence(task, _extract(task, chunk.text, hint_source="논문"),
-                                    len(out), source_title=chunk.locator.doc_id or "corpus",
+        chunks, paper_errors = _search_papers(task, queries)
+        errors.extend(paper_errors)
+        for chunk in chunks:
+            try:
+                items = _extract(task, chunk.text, hint_source="논문")
+            except Exception as error:  # noqa: BLE001 - 구조화 출력/LLM 오류는 해당 원문만 실패 처리
+                errors.append(_error(f"paper extract {chunk.chunk_id}", error))
+                continue
+            out.extend(_to_evidence(task, items, len(out),
+                                    source_title=chunk.locator.doc_id or "corpus",
                                     publisher="corpus", locator=chunk.locator, force_source_type="논문",
                                     published_at=paper_search.doc_published(chunk.locator.doc_id)))
 
     # 1차 패스: 검색 결과 fetch·추출 + 인용된 1차 출처 URL을 대기열에 추가(셀당 최대 5건).
     # 추가된 1차 출처도 같은 파이프라인으로 fetch·추출되어 자체 근거가 된다.
-    urls = _search_web(queries, max_results)
+    urls, web_errors = _search_web(queries, max_results)
+    errors.extend(web_errors)
     fetched: list[tuple[str, dict, list[_Item]]] = []
     followed, i = 0, 0
     while i < len(urls):
         url = urls[i]
         i += 1
-        page = _fetch_page(url)
-        if not page or not page["text"].strip():
+        try:
+            page = _fetch_page(url)
+        except Exception as error:  # noqa: BLE001 - 다운로드·파싱 실패는 URL 단위로 격리
+            errors.append(_error(f"fetch {url}", error))
             continue
-        items = _extract(task, page["text"], hint_source=page["publisher"])
+        if not page or not page["text"].strip():
+            errors.append(f"fetch {url}: empty content")
+            continue
+        try:
+            items = _extract(task, page["text"], hint_source=page["publisher"])
+        except Exception as error:  # noqa: BLE001 - 구조화 출력/LLM 오류는 해당 URL만 실패 처리
+            errors.append(_error(f"extract {url}", error))
+            continue
         fetched.append((url, page, items))
         for it in items:
             pu = (it.primary_source_url or "").strip()
@@ -124,40 +168,45 @@ def _collect_once(task: CollectTask, queries: dict) -> list[Evidence]:
                                 publisher=page["publisher"], source_url=url,
                                 published_at=page["published_at"], locator=Locator(url=url),
                                 confirmed_urls=confirmed))
-    return [e for e in out if e.relevant]
+    return [e for e in out if e.relevant], errors
 
 
-def _search_papers(task: CollectTask, queries: dict) -> list[Chunk]:
-    from ..tools import paper_search   # rag/ 의존은 여기서만
+def _search_papers(task: CollectTask, queries: dict) -> tuple[list[Chunk], list[str]]:
+    from ..tools import paper_search  # rag/ 의존은 여기서만
 
     chunks: dict[str, Chunk] = {}
+    errors: list[str] = []
     for qs in queries.values():
         for q in qs:
-            try:                        # manifest의 doc_id == tech_id → 해당 기술 논문만 검색
+            try:                       # manifest의 doc_id == tech_id → 해당 기술 논문만 검색
                 found = paper_search.search(q, k=runtime()["retrieval"]["top_k"],
                                             doc_ids=[task.tech["tech_id"]])
-            except Exception:             # 인덱스 미구축·의존성 미설치 등 — 웹 근거만으로 진행
-                return []
+            except Exception as error:  # noqa: BLE001 - RAG 실패 후에도 웹 근거 수집은 계속한다
+                errors.append(_error(f"paper search {q!r}", error))
+                continue
             for c in found:
                 chunks[c.chunk_id] = c
-    return list(chunks.values())
+    return list(chunks.values()), errors
 
 
-def _search_web(queries: dict, max_results: int) -> list[str]:
+def _search_web(queries: dict, max_results: int) -> tuple[list[str], list[str]]:
     urls: list[str] = []
+    errors: list[str] = []
     for qs in queries.values():
         for q in qs:
-            for r in web_search.search(q, max_results=max_results):
-                if r["url"] and r["url"] not in urls:
-                    urls.append(r["url"])
-    return urls
+            try:
+                found = web_search.search(q, max_results=max_results)
+            except Exception as error:  # noqa: BLE001 - 검색 제공자 오류는 쿼리 단위로 격리
+                errors.append(_error(f"web search {q!r}", error))
+                continue
+            for result in found:
+                if result["url"] and result["url"] not in urls:
+                    urls.append(result["url"])
+    return urls, errors
 
 
 def _fetch_page(url: str) -> dict | None:
-    try:
-        return open_source.fetch(url)
-    except Exception:                     # 다운로드·파싱 실패 원문은 근거로 못 쓰므로 건너뜀
-        return None
+    return open_source.fetch(url)
 
 
 def _extract(task: CollectTask, text: str, hint_source: str) -> list[_Item]:
