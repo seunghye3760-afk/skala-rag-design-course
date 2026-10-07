@@ -43,10 +43,15 @@ def _err(task_id: str, node: str, e: Exception) -> dict:
 
 # ---------- 수집 ----------
 
-def _criterion_for_channels(crit: dict, channels: list[str]) -> dict:
-    if "paper" in channels:
-        return crit
-    return {**crit, "evidence_sources": [s for s in crit["evidence_sources"] if not s.startswith("RAG")]}
+def _criterion_for_task(crit: dict, t: SubTask) -> dict:
+    """계약 파일을 고치지 않고 계획을 전달한다: 채널은 evidence_sources로(paper 없으면 RAG 출처 제거 →
+    collect_evidence의 uses_rag()가 False), 쿼리는 criterion["queries"]로 (LLM 플래너 템플릿)."""
+    out = dict(crit)
+    if "paper" not in t.channels:
+        out["evidence_sources"] = [s for s in crit["evidence_sources"] if not s.startswith("RAG")]
+    if t.queries:
+        out["queries"] = dict(t.queries)
+    return out
 
 
 def route_after_plan(state: OrchestratorState):
@@ -58,11 +63,12 @@ def route_after_plan(state: OrchestratorState):
     rub = state["rubrics"]
     sends = []
     for t in pending:
-        hint = t.reason.split("] ", 1)[-1] if t.reason.startswith("[retry]") else None
+        hint = t.reason.split(" / 이전: ", 1)[1] if " / 이전: " in t.reason else None
         sends.append(Send("collect_worker", CollectJob(
-            task_id=t.task_id, channels=t.channels, run_id=state.get("run_id", "run"),
+            task_id=t.task_id, channels=t.channels, slot=t.slot, queries=t.queries,
+            run_id=state.get("run_id", "run"),
             task=CollectTask(tech=_tech(state, t.tech_id),
-                             criterion=_criterion_for_channels(criterion(rub, t.criterion_id), t.channels),
+                             criterion=_criterion_for_task(criterion(rub, t.criterion_id), t),
                              round=t.round, rewrite_hint=hint))))
     progress.step("dispatch", f"collect_worker {len(sends)}개 fan-out (round {pending[0].round})")
     return sends
@@ -70,7 +76,21 @@ def route_after_plan(state: OrchestratorState):
 
 def _subtask(job: CollectJob, status: str, err: str | None = None) -> SubTask:
     return SubTask(task_id=job.task_id, tech_id=job.task.tech["tech_id"], criterion_id=job.task.criterion["id"],
-                   channels=job.channels, round=job.task.round, status=status, last_error=err)
+                   channels=job.channels, round=job.task.round, slot=job.slot, queries=job.queries,
+                   status=status, last_error=err)
+
+
+_SLOT = "abcdefghij"
+
+
+def _tag_slot(out: dict, job: CollectJob) -> dict:
+    """같은 셀·같은 round의 서브태스크가 여러 개면 evidence_id가 겹친다(collect_evidence는 round·순번만 씀).
+    slot>0 이면 id 끝에 글자를 붙여 구분한다 (숫자를 붙이면 balance.py의 수치 대조가 숫자로 오인)."""
+    if not job.slot:
+        return out
+    tag = _SLOT[job.slot % len(_SLOT)]
+    return {**out, "evidence_pool": [e.model_copy(update={"evidence_id": f"{e.evidence_id}{tag}"})
+                                     for e in out.get("evidence_pool", [])]}
 
 
 def collect_worker(job: CollectJob) -> dict:
@@ -78,7 +98,7 @@ def collect_worker(job: CollectJob) -> dict:
     last: Exception | None = None
     for attempt in range(1 + _worker_retry()):
         try:
-            out = collect_evidence(job.task)
+            out = _tag_slot(collect_evidence(job.task), job)
             return {**out, "task_plan": [_subtask(job, "done")], "node_status": {job.task_id: "done"},
                     "step_count": 1}
         except Exception as e:  # noqa: BLE001 — 어떤 예외든 같은 정책(재시도 1회 → 제외)

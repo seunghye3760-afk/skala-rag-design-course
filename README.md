@@ -178,7 +178,7 @@ report.pdf 생성 후 사람 검증 후 평가하는 항목(체크박스)은 추
 ## Orchestrator-Workers 실행 (Agent 과제)
 
 RAG 실습 그래프(`app.py`)는 그대로 두고, `src/kv_eval/orchestrator/`에 Orchestrator-Workers 조정 계층을 따로 구성했다
-(계획 노드 `plan_tasks` → 동적 fan-out → worker fallback → 균형 점검 → 보고서 → 품질 평가 4항목 + 미달 시 Loop).
+(LLM 플래너 `plan_tasks`가 채널·쿼리·worker 수를 계획 → 동적 fan-out → worker fallback → 균형 점검 → 보고서 → 품질 평가 4항목 + 미달 시 Loop).
 설계 근거·State 7항목·채점 대응표는 `docs/agent_assignment/00_과제_프롬프트.md`, 구조는 `docs/architecture.md`의 Orchestrator 절 참고.
 
 ```bash

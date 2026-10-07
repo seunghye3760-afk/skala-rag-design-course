@@ -14,7 +14,7 @@ def test_orchestrator_runs_end_to_end():
     heads = [l for l in text.splitlines() if l.startswith("## ")]
     assert heads[0] == "## SUMMARY" and heads[-1] == "## REFERENCE"
     assert len(final["final_results"]) == 4
-    assert [f["count"] for f in final["fanout_log"]] == [4]            # 계획에서 나온 fan-out 수
+    assert [f["count"] for f in final["fanout_log"]] == [8]            # 플래너가 정한 fan-out 수 (셀 4 × 템플릿 2)
     assert all(s == "done" for k, s in final["node_status"].items() if not k.startswith("score:"))
     log = output_root() / "o" / "decision_log.jsonl"
     assert log.exists() and {json.loads(l)["node"] for l in log.read_text().splitlines()} >= {"plan_tasks", "finalize"}

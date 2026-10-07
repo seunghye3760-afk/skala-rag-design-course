@@ -5,7 +5,7 @@ from typing import Annotated, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from kv_eval.orchestrator.state import SubTask, merge_dict, merge_tasks
+from kv_eval.orchestrator.state import SubTask, keep_last, merge_dict, merge_tasks
 
 
 def _t(i, status="pending"):
@@ -19,6 +19,10 @@ def test_merge_tasks_overwrites_by_id_and_keeps_order():
     assert [t.task_id for t in out] == [t.task_id for t in left]      # 순서 유지
     assert [t.status for t in out] == ["pending", "done", "pending"]  # id 기준 최신 덮어쓰기
     assert merge_tasks(None, [_t(9)])[0].task_id == "turboquant:TRL-9:r0"
+
+
+def test_keep_last_tolerates_parallel_failures():
+    assert keep_last("a:err", "b:err") == "b:err" and keep_last("a:err", None) == "a:err"
 
 
 def test_merge_dict_right_wins():

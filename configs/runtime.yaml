@@ -37,6 +37,10 @@ fallback:
 concurrency:
   max_concurrency: 8   # Send 병렬 worker 동시 실행 상한 (Tavily·OpenAI rate limit 기준)
 
+plan:
+  max_subtasks_per_cell: 3   # LLM 플래너가 셀당 만들 수 있는 쿼리 템플릿(=worker) 수 상한 (비용 가드)
+  llm_retry: 1               # 플래너 호출 실패 시 재시도, 소진 시 루브릭 기본 템플릿으로 비상 계획
+
 quality:
   max_rounds: 2        # evaluate_report 횟수 상한 — 도달 시 미달 항목을 기록하고 정상 종료
   judge_threshold: 4   # LLM Judge 4항목 통과 임계 (1~5)

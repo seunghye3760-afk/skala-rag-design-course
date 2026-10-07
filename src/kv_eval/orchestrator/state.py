@@ -35,6 +35,8 @@ class SubTask(BaseModel):
     criterion_id: str
     channels: list[Channel]  # 계획 단계에서 정한 검색 채널 (paper = 논문 RAG, web = Tavily)
     round: int = 0
+    slot: int = 0  # 같은 셀 안의 몇 번째 쿼리 템플릿인가 (LLM 플래너가 쌍 수를 정함 → fan-out 수)
+    queries: dict[str, str] | None = None  # {"pro": tpl, "con": tpl} — {tech} 자리 포함, 두 기술 동일
     status: TaskStatus = "pending"
     reason: str = ""  # [관측성] 왜 이 채널·이 셀인지 한 줄 요약 (본문은 decision_log.jsonl)
     last_error: str | None = None  # [재개] 실패 지점 식별
@@ -45,6 +47,8 @@ class CollectJob(BaseModel):
     task_id: str
     task: CollectTask
     channels: list[Channel]
+    slot: int = 0
+    queries: dict[str, str] | None = None
     run_id: str = ""  # decision_log 경로용 상관 키
 
 
@@ -73,6 +77,11 @@ def merge_tasks(left: list[SubTask] | None, right: list[SubTask] | None) -> list
     return list(merged.values())
 
 
+def keep_last(left, right):
+    """단일 값 키를 병렬 worker가 같은 스텝에 여러 번 써도 되게 한다 (마지막 비-None 값 유지). last_error용."""
+    return right if right is not None else left
+
+
 def merge_dict(left: dict | None, right: dict | None) -> dict:
     """dict 병합 (오른쪽 우선). node_status처럼 worker마다 자기 키 하나만 쓰는 경우에 쓴다."""
     return {**(left or {}), **(right or {})}  # ---------- State ----------
@@ -95,7 +104,7 @@ class OrchestratorState(TypedDict, total=False):
     status: RunStatus  # [제어] RUNNING → SUCCESS | PARTIAL | FAILED
     node_status: Annotated[dict[str, str], merge_dict]  # [재개][동시성] task_id → pending|done|failed|excluded
     errors: Annotated[list[dict], operator.add]  # [재개][관측성] {"task_id","node","type","message","ts"}
-    last_error: str | None  # [재개] 마지막 실패 요약
+    last_error: Annotated[str | None, keep_last]  # [재개][동시성] 마지막 실패 요약 (worker 여러 개가 같은 스텝에 실패 가능)
     fanout_log: Annotated[list[dict], operator.add]  # [관측성] 라운드별 fan-out 수 (README 동적 처리 근거)
     excluded_gaps: Annotated[list[RetryTarget], operator.add]  # [동시성] fallback으로 제외된 셀 → info_gaps에 합침
     info_gaps: list[RetryTarget]  # [페이로드] balance_check가 한도 소진 후 기록
