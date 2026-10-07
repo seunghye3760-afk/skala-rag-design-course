@@ -48,6 +48,36 @@ def test_forbidden_phrase_triggers_regeneration(monkeypatch):
     assert "더 우수" in final["synthesis_feedback"] or "금지 표현" in final["synthesis_feedback"]
 
 
+def test_corrupted_synthesis_output_is_caught_and_regenerated(monkeypatch):
+    """gpt-5.4-mini가 '…필요하다.}}  select 1 to 9 … }]}]}]' 식 잔재를 붙인 실제 사례(2026-10-07 15:16 실행)."""
+    original, calls = syn_mod._fake, {"n": 0}
+    junk = "두 기술은 조건이 다르다.}}  select 1 to 9 to use piecewise linear fit " + "}]" * 40
+
+    def broken_once(state):
+        out = original(state)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            out["final_assessment"]["_overall"] = junk
+        return out
+
+    monkeypatch.setattr(syn_mod, "_fake", broken_once)
+    final = _run("qd")
+    assert calls["n"] == 2 and final["quality_verdict"].passed
+    assert "integrity" in _decisions_reasons("qd")[0]
+    assert "select 1 to 9" not in Path(final["report_path"]).read_text(encoding="utf-8")
+
+
+def test_sanitize_text_cuts_bracket_residue():
+    clean, cut = syn_mod.sanitize_text("조건 확인이 필요하다.}}  select 1 to 9 }]}]}]")
+    assert clean == "조건 확인이 필요하다." and cut
+    assert syn_mod.sanitize_text("정상 문장이다.") == ("정상 문장이다.", False)
+
+
+def _decisions_reasons(run_id):
+    rows = [json.loads(l) for l in (output_root() / run_id / "decision_log.jsonl").read_text().splitlines()]
+    return [r["reason"] for r in rows if r["decision"] == "rules_fail"]
+
+
 def test_limit_reached_terminates_normally(monkeypatch):
     original = syn_mod._fake
 

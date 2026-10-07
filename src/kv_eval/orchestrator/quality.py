@@ -175,17 +175,34 @@ def check_coverage(state: OrchestratorState, secs: dict[str, str]) -> tuple[bool
     return not reasons, reasons, cells
 
 
+_INTEGRITY_RE = re.compile(r"[\]\}]{4,}|\}\}\s*[A-Za-z]")   # 괄호 스팸, 또는 '}}' 뒤에 바로 영문 (깨진 구조화 출력)
+
+
+def check_integrity(state: OrchestratorState, secs: dict[str, str]) -> tuple[bool, list[str]]:
+    """LLM 서술에 구조화 출력 잔재(괄호 스팸·'}}' 뒤 헛소리)가 섞이지 않았는가. 미달 → 재생성."""
+    body = _body_without(secs)
+    hits = _INTEGRITY_RE.findall(body)
+    reasons = [f"서술에 구조화 출력 잔재 {len(hits)}곳 (괄호 스팸 또는 '}}' 뒤 영문) — 종합 LLM 출력 손상"] if hits else []
+    a = state.get("final_assessment") or {}
+    bad = [k for k, v in a.items() if isinstance(v, str) and _INTEGRITY_RE.search(v)]
+    if bad:
+        reasons.append(f"final_assessment 손상 필드: {bad}")
+    return not reasons, reasons
+
+
 def evaluate_report(state: OrchestratorState) -> dict:
     rnd = state.get("quality_round", 0) + 1
     secs = _sections(_report_text(state))
+    i_ok, i_why = check_integrity(state, secs)
     g_ok, g_why, g_cells = check_groundedness(state, secs)
     n_ok, n_why = check_neutrality(state, secs)
     b_ok, b_why, b_cells = check_bias(state)
     c_ok, c_why, c_cells = check_coverage(state, secs)
-    rule_pass = {"groundedness": g_ok, "neutrality": n_ok, "bias": b_ok, "coverage": c_ok}
+    rule_pass = {"groundedness": g_ok, "neutrality": n_ok, "bias": b_ok, "coverage": c_ok, "integrity": i_ok}
     failed = [k for k, v in rule_pass.items() if not v]
     feedback = "\n".join(f"- {k}: {'; '.join(w)}" for k, w in
-                         (("groundedness", g_why), ("neutrality", n_why), ("bias", b_why), ("coverage", c_why)) if w)
+                         (("groundedness", g_why), ("neutrality", n_why), ("bias", b_why), ("coverage", c_why),
+                          ("integrity", i_why)) if w)
     verdict = QualityVerdict(round=rnd, rule_pass=rule_pass, passed=False, failed_items=failed,
                              failed_cells=sorted(set(g_cells + b_cells + c_cells)), feedback=feedback)
     decision(state.get("run_id", "run"), "evaluate_report", "rules_pass" if not failed else "rules_fail",

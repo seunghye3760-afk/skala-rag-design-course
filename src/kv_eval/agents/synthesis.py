@@ -17,6 +17,7 @@ final_assessment 반환 형식 (state.py의 MainState.final_assessment: dict, �
 from __future__ import annotations
 
 import os
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -185,6 +186,38 @@ def _get_llm():
     return chat_model().with_structured_output(_Synthesis)
 
 
+_JUNK_RE = re.compile(r"\}\}|\}\]|\]\}|[\]\}]{4,}")   # 구조화 출력이 깨질 때 문자열 안에 섞여 들어오는 괄호 잔재
+
+
+def sanitize_text(text: str) -> tuple[str, bool]:
+    """LLM 문자열 필드에서 괄호 잔재 이후를 잘라낸다. (정화된 문자열, 잘렸는지)
+    gpt-5.4-mini가 '…조건 확인이 필요하다.}}  select 1 to 9 …}]}]}]' 식으로 문장 뒤에 헛소리를 붙인 사례(2026-10-07)."""
+    if not isinstance(text, str):
+        return text, False
+    m = _JUNK_RE.search(text)
+    if not m:
+        return text, False
+    return text[:m.start()].rstrip(), True
+
+
+def sanitize_assessment(assessment: dict) -> tuple[dict, list[str]]:
+    """final_assessment 전체를 재귀 정화하고 잘린 필드 경로를 돌려준다."""
+    cut: list[str] = []
+
+    def walk(x, path):
+        if isinstance(x, dict):
+            return {k: walk(v, f"{path}.{k}") for k, v in x.items()}
+        if isinstance(x, list):
+            return [walk(v, f"{path}[{i}]") for i, v in enumerate(x)]
+        if isinstance(x, str):
+            s, c = sanitize_text(x)
+            if c:
+                cut.append(path)
+            return s
+        return x
+    return walk(assessment, "final_assessment"), cut
+
+
 def _normalize_cid(raw: str, known: list[str]) -> str:
     """LLM이 'TRL-1 검증 환경 수준'처럼 id에 이름을 붙여 돌려줘도 루브릭 id로 맞춘다."""
     raw = (raw or "").strip()
@@ -200,7 +233,7 @@ def _apply(state: MainState, out: _Synthesis) -> dict:
     for c in state.get("conflicts", []):
         item = by_id.get(c.comparison_id)
         interp = item.interpretation if item and item.interpretation in _INTERPRETATIONS else "근거 부족"
-        note = f" — {item.note}" if item else ""
+        note = f" — {sanitize_text(item.note)[0]}" if item else ""
         conflicts.append(c.model_copy(update={"interpretation": f"{interp}{note}"}))
 
     assessment: dict = {
@@ -210,6 +243,9 @@ def _apply(state: MainState, out: _Synthesis) -> dict:
     assessment["_cross"] = out.cross_comparison.model_dump()
     assessment["_scenario"] = out.scenario_guidance.model_dump()
     assessment["_overall"] = out.overall
+    assessment, cut = sanitize_assessment(assessment)
+    if cut:
+        progress.step("synthesize", f"LLM 출력에서 괄호 잔재 이후를 잘라냄: {', '.join(cut)}")
     known = [c["id"] for c in state["rubrics"]["criteria"]]
     assessment["_comparability"] = {
         _normalize_cid(x.criterion_id, known): {"verdict": x.verdict, "turboquant": x.turboquant_conditions,
