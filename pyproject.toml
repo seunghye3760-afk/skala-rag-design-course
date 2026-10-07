@@ -19,6 +19,7 @@ dependencies = [
     "sentence-transformers>=3.0",
     "markdown>=3.6",
     "reportlab>=4.0",   # report.md -> report.pdf (담당 4, reporting/pdf.py). 순수 파이썬, 시스템 의존성 없음.
+    "langgraph-checkpoint-sqlite>=3.1.1",
 ]
 
 [dependency-groups]

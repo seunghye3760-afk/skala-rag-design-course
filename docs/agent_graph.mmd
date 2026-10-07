@@ -1,0 +1,44 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	load_config(load_config)
+	load_rubrics(load_rubrics)
+	tech_research(tech_research)
+	plan_tasks(plan_tasks)
+	run_subtask(run_subtask)
+	evidence_join(evidence_join)
+	score_dispatch(score_dispatch)
+	score_task(score_task)
+	score_join(score_join)
+	balance_check(balance_check)
+	apply_rules(apply_rules)
+	synthesize_report(synthesize_report)
+	quality_eval(quality_eval)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> load_config;
+	apply_rules --> synthesize_report;
+	balance_check -.-> apply_rules;
+	balance_check -.-> plan_tasks;
+	balance_check -.-> score_dispatch;
+	evidence_join --> score_dispatch;
+	load_config --> load_rubrics;
+	load_rubrics --> tech_research;
+	plan_tasks -.-> evidence_join;
+	plan_tasks -.-> run_subtask;
+	quality_eval -.-> __end__;
+	quality_eval -.-> plan_tasks;
+	quality_eval -.-> synthesize_report;
+	run_subtask --> evidence_join;
+	score_dispatch -.-> score_task;
+	score_join --> balance_check;
+	score_task --> score_join;
+	synthesize_report --> quality_eval;
+	tech_research --> plan_tasks;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+

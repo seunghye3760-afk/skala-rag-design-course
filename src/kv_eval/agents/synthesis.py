@@ -21,7 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .. import progress
-from ..config import ROOT, runtime
+from ..config import ROOT
 from ..graph.state import MainState
 from ..graph.task_schema import ConflictCandidate, TechId
 
@@ -112,16 +112,18 @@ def _conflict_block(state: MainState, names: dict) -> str:
 def _build_messages(state: MainState) -> list[dict]:
     system = (ROOT / PROMPT_FILE).read_text(encoding="utf-8")
     names = {t["tech_id"]: t["name"] for t in state["technologies"]}
-    user = "\n\n".join([_tech_block(state, t["tech_id"]) for t in state["technologies"]]
-                       + ["## 상충 후보", _conflict_block(state, names)])
+    blocks = [_tech_block(state, t["tech_id"]) for t in state["technologies"]] \
+        + ["## 상충 후보", _conflict_block(state, names)]
+    if fb := state.get("quality_feedback"):   # 품질 평가 미달 → 재작성 때 지적 사항을 반드시 반영
+        blocks += ["## 이전 보고서 품질 평가 지적 사항 (모두 고쳐서 다시 쓸 것)", "\n".join(f"- {x}" for x in fb)]
+    user = "\n\n".join(blocks)
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def _get_llm():
-    from langchain_openai import ChatOpenAI  # 무거운 라이브러리는 함수 안에서 import
-    rt = runtime()["llm"]
-    model = rt.get("model") or "gpt-4.1-mini"
-    return ChatOpenAI(model=model, temperature=rt.get("temperature", 0)).with_structured_output(_Synthesis)
+    # 공용 chat_model 사용: 모델은 runtime.yaml 한 곳에서, gpt-5 계열 temperature 미지원도 거기서 처리
+    from ..llm import chat_model
+    return chat_model().with_structured_output(_Synthesis)
 
 
 def _apply(state: MainState, out: _Synthesis) -> dict:

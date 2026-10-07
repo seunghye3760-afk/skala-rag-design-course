@@ -17,8 +17,9 @@ from __future__ import annotations
 import json
 import re
 
-from .. import progress
+from .. import obs, progress
 from ..config import criteria_list, runtime
+from ..graph.guards import control_step, step_limit_reached
 from ..graph.reducers import evidence_for, latest_results
 from ..graph.state import MainState
 from ..graph.task_schema import CriterionResult, Evidence, RetryTarget, cell_key
@@ -151,18 +152,23 @@ def find_issues(state: MainState) -> list[RetryTarget]:
 def balance_check(state: MainState) -> dict:
     issues = find_issues(state)
     rnd = state.get("retry_round", 0)
-    if issues and rnd < runtime()["retry"]["max_rounds"]:
+    ctl = control_step(state, "balance_check", f"done r{rnd} issues={len(issues)}")
+    if issues and rnd < runtime()["retry"]["max_rounds"] and not step_limit_reached(ctl):
         progress.step("balance_check", f"문제 {len(issues)}건 발견 → {rnd + 1}라운드 재시도")
-        return {"balance_issues": issues, "retry_targets": issues, "retry_round": rnd + 1}
-    progress.step("balance_check", f"문제 {len(issues)}건"
-                  + (" — 재시도 한도 소진, info_gaps로 기록" if issues else " — 통과"))
-    return {"balance_issues": issues, "retry_targets": [], "info_gaps": issues}
+        kinds = {k: sum(x.kind == k for x in issues) for k in ("research", "rescore")}
+        obs.log_decision(state, "balance_check", "retry", f"문제 {len(issues)}건", round=rnd, **kinds,
+                         cells=[f"{x.tech_id}:{x.criterion_id} {x.kind} — {x.reason}" for x in issues])
+        return {"balance_issues": issues, "retry_targets": issues, "retry_round": rnd + 1, **ctl}
+    why = "통과" if not issues else ("step 상한 도달" if step_limit_reached(ctl) else "재시도 한도 소진")
+    progress.step("balance_check", f"문제 {len(issues)}건 — {why}" + (", info_gaps로 기록" if issues else ""))
+    obs.log_decision(state, "balance_check", "proceed", why, round=rnd, info_gaps=len(issues))
+    return {"balance_issues": issues, "retry_targets": [], "info_gaps": issues, **ctl}
 
 
 def route_after_balance(state: MainState) -> str:
     targets = state.get("retry_targets") or []
     if any(x.kind == "research" for x in targets):
-        return "dispatch_collect"
+        return "plan_tasks"            # 근거 문제 → Orchestrator 재계획
     if targets:
         return "score_dispatch"        # 형식 오류만 → 근거 수집 건너뛰고 재채점
     return "apply_rules"
