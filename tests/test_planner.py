@@ -2,7 +2,7 @@
 from kv_eval.config import criteria_list, rubrics, technologies_config
 from kv_eval.graph.dispatch import fan_out_collect, fan_out_score
 from kv_eval.graph.planner import plan_collect_work, plan_score_work
-from kv_eval.graph.task_schema import RetryTarget
+from kv_eval.graph.task_schema import Evidence, Locator, RetryTarget
 
 
 def _full_state() -> dict:
@@ -101,6 +101,45 @@ def test_score_retry_groups_only_targeted_criteria():
     assert plan.score_tasks[0].tech["tech_id"] == "cxl_pnm"
     assert plan.score_tasks[0].agent_type == "market"
     assert plan.score_tasks[0].criterion_ids == ["MKT-1", "MKT-2"]
+
+
+def test_score_retry_deduplicates_targets_and_cross_round_evidence():
+    evidence = []
+    for round_ in range(3):
+        for stance in ("pro", "con"):
+            evidence.append(Evidence(
+                evidence_id=f"turboquant-MKT-1-r{round_}-{stance}",
+                tech_id="turboquant",
+                criterion_id="MKT-1",
+                claim=f"동일한 {stance} 주장",
+                source_title=f"{stance} source",
+                source_url=f"https://example.com/{stance}",
+                publisher="Example",
+                accessed_at="2026-10-07",
+                source_type="공식 문서",
+                evidence_grade="B",
+                stance=stance,
+                measurement_type="실측",
+                excerpt="같은 원문",
+                locator=Locator(url=f"https://example.com/{stance}"),
+                round=round_,
+            ))
+    duplicate_targets = [
+        RetryTarget(tech_id="turboquant", criterion_id="MKT-1", kind=kind, reason="retry")
+        for kind in ("research", "rescore")
+    ]
+    state = {
+        **_full_state(),
+        "retry_round": 2,
+        "retry_targets": duplicate_targets,
+        "evidence_pool": evidence,
+    }
+
+    task = plan_score_work(state)["work_plan"].score_tasks[0]
+
+    assert task.criterion_ids == ["MKT-1"]
+    assert len(task.evidence) == 2
+    assert {item.stance for item in task.evidence} == {"pro", "con"}
 
 
 def test_fan_out_uses_tasks_already_stored_in_plan():

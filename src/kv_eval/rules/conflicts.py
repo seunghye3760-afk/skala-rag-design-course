@@ -10,7 +10,11 @@ def conflict_candidates(tech_id: str, finals: dict[str, CriterionResult], pairs:
         a, b = finals.get(cell_key(tech_id, p["a"])), finals.get(cell_key(tech_id, p["b"]))
         if a is None or b is None:
             continue                                   # 작게 돌린 실행에서 빠진 항목
-        refs = [p["a"], p["b"]]
+        refs = list(dict.fromkeys(
+            brief.evidence_id
+            for result in (a, b)
+            for brief in result.evidence
+        ))
         if a.score == "NA" or b.score == "NA":
             out.append(ConflictCandidate(tech_id=tech_id, comparison_id=p["id"], status="info_gap", evidence_refs=refs))
         elif abs(a.score - b.score) >= 2:

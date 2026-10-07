@@ -11,7 +11,7 @@ from .config import ROOT, runtime
 
 
 @lru_cache
-def chat_model():
+def chat_model(max_tokens: int | None = None):
     """runtime.yaml 설정으로 ChatOpenAI 1개를 만들어 재사용한다.
 
     - KV_LLM_MODEL 환경변수(.env 포함)가 있으면 runtime.yaml보다 우선한다.
@@ -19,6 +19,7 @@ def chat_model():
     - API 키는 프로젝트 .env를 셸 환경변수보다 우선한다
       (셸에 남은 옛 OPENAI_API_KEY가 load_dotenv 기본 동작으로는 .env를 가리기 때문).
     - gpt-5 계열은 temperature를 지원하지 않으므로 temperature 없이 생성한다.
+    - max_tokens를 주면 호출 목적에 맞는 출력 상한을 적용한다. 값별로 별도 캐시한다.
     """
     from dotenv import dotenv_values
     from langchain_openai import ChatOpenAI
@@ -29,6 +30,8 @@ def chat_model():
         raise ValueError("configs/runtime.yaml llm.model이 비어 있음")
     api_key = dotenv_values(ROOT / ".env").get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     kwargs: dict = {"model": model, "api_key": api_key}
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
     if not model.startswith("gpt-5"):
         kwargs["temperature"] = cfg.get("temperature", 0)
     return ChatOpenAI(**kwargs)

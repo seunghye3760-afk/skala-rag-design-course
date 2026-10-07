@@ -9,9 +9,23 @@ from .reducers import evidence_for
 from .state import MainState
 from .task_schema import CollectTask, ScoreTask, WorkPlan
 
+_GRADE_RANK = {"A": 0, "B": 1, "C": 2, "D": 3}
+_SCORE_EVIDENCE_PER_STANCE = 4
+
 
 def _tech(state: MainState, tech_id: str) -> dict:
     return next(t for t in state["technologies"] if t["tech_id"] == tech_id)
+
+
+def _score_evidence(pool: list, tech_id: str, criterion_id: str) -> list:
+    """채점 입력은 stance별 강한 근거를 제한적으로 선택해 프롬프트 폭증을 막는다."""
+    evidence = evidence_for(pool, tech_id, criterion_id)
+    selected = []
+    for stance in ("pro", "con"):
+        candidates = [item for item in evidence if item.stance == stance]
+        candidates.sort(key=lambda item: (_GRADE_RANK[item.evidence_grade], item.evidence_id))
+        selected.extend(candidates[:_SCORE_EVIDENCE_PER_STANCE])
+    return selected
 
 
 def plan_collect_work(state: MainState) -> dict:
@@ -54,13 +68,15 @@ def plan_score_work(state: MainState) -> dict:
         reason = "initial"
     else:
         for target in state.get("retry_targets", []):
-            groups[(agent_of(rub, target.criterion_id), target.tech_id)].append(target.criterion_id)
+            key = (agent_of(rub, target.criterion_id), target.tech_id)
+            if target.criterion_id not in groups[key]:
+                groups[key].append(target.criterion_id)
         reason = "score_retry"
 
     pool = state.get("evidence_pool", [])
     tasks = []
     for (agent, tech_id), criterion_ids in groups.items():
-        evidence = [e for cid in criterion_ids for e in evidence_for(pool, tech_id, cid)]
+        evidence = [e for cid in criterion_ids for e in _score_evidence(pool, tech_id, cid)]
         tasks.append(ScoreTask(
             tech=_tech(state, tech_id),
             agent_type=agent,

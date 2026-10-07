@@ -1,5 +1,6 @@
-from kv_eval.graph.task_schema import CriterionResult, Evidence, Locator
+from kv_eval.graph.task_schema import CriterionResult, Evidence, EvidenceBrief, Locator
 from kv_eval.rules.caps import apply_caps
+from kv_eval.rules.conflicts import conflict_candidates
 from kv_eval.rules.trl_gate import trl_level
 
 
@@ -33,3 +34,26 @@ def test_trl_gates():
     assert trl_level({"TRL-1": 4, "TRL-2": 2, "TRL-3": 3})[0] == 6
     assert trl_level({"TRL-1": 4, "TRL-2": "NA", "TRL-3": 2})[0] == 5
     assert trl_level({"TRL-1": 5, "TRL-3": 4, "TRL-4": 5, "TRL-5": 5})[0] == 9
+
+
+def test_conflict_candidates_reference_evidence_ids_not_criterion_ids():
+    dom = res(4)
+    dom.criterion_id = "DOM-3"
+    dom.evidence = [EvidenceBrief(
+        evidence_id="turboquant-DOM-3-r0-0",
+        claim="처리량 개선",
+        source="실험 보고서",
+        grade="A",
+        stance="pro",
+    )]
+    stk = res("NA", agent="stakeholder")
+    stk.criterion_id = "STK-2"
+    pairs = [{"id": "P6", "a": "DOM-3", "b": "STK-2"}]
+
+    candidates = conflict_candidates(
+        "turboquant",
+        {"turboquant:DOM-3": dom, "turboquant:STK-2": stk},
+        pairs,
+    )
+
+    assert candidates[0].evidence_refs == ["turboquant-DOM-3-r0-0"]

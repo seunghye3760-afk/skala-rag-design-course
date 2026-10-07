@@ -43,4 +43,5 @@ class MainState(TypedDict, total=False):
     report_retry_round: int
     report_page_count: int
     report_path: str
+    report_failure_path: str
     messages: Annotated[list, add_messages]

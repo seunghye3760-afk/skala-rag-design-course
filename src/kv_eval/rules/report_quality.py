@@ -111,7 +111,12 @@ def _first_sentence(text: str, limit: int) -> str:
     sentence = match.group(0).strip() if match else text
     if len(sentence) <= limit:
         return sentence
-    return sentence[:limit - 1].rstrip() + "…"
+    clipped = sentence[:limit - 1].rstrip()
+    if clipped and not sentence[len(clipped):].startswith((" ", "\t", "\n")):
+        boundary = clipped.rsplit(" ", 1)[0].rstrip()
+        if boundary:
+            clipped = boundary
+    return clipped.rstrip(".,;:") + "…"
 
 
 def _compress_markdown(draft: str, level: int) -> str:

@@ -9,7 +9,7 @@ from kv_eval.graph.task_schema import (
 )
 from kv_eval.reporting import pdf as pdf_mod
 from kv_eval.reporting import report as report_mod
-from kv_eval.rules.report_quality import compress_report, evaluate_report
+from kv_eval.rules.report_quality import _first_sentence, compress_report, evaluate_report
 
 
 def _evidence():
@@ -173,6 +173,7 @@ def test_quality_rewrite_loop_stops_after_shared_retry_limit(monkeypatch):
     assert out["report_retry_round"] == 2
     assert any("재시도 한도" in issue for issue in out["report_quality"].issues)
     assert persisted == [] and "report_path" not in out
+    assert out["report_failure_path"].endswith("report.failed.md")
 
 
 def test_report_fails_after_maximum_compression_rounds(monkeypatch):
@@ -188,6 +189,7 @@ def test_report_fails_after_maximum_compression_rounds(monkeypatch):
     assert out["report_retry_round"] == 2
     assert any("압축 최대 횟수" in issue for issue in out["report_quality"].issues)
     assert persisted == [] and "report_path" not in out
+    assert out["report_failure_path"].endswith("report.failed.md")
 
 
 def test_invalid_evidence_id_fails_quality_check():
@@ -239,6 +241,17 @@ def test_compression_preserves_required_decision_context():
         assert term in state["report_draft"]
     assert "핵심 판단이다." in state["report_draft"]
     assert "반복되는 상세 설명" not in state["report_draft"]
+
+
+def test_truncation_does_not_create_partial_numbers():
+    text = "Evaluated on LongBench with context lengths up to 8192 tokens under load."
+
+    rendered = report_mod._one_sentence(text, 57)
+    compressed = _first_sentence(text, 57)
+
+    assert "819…" not in rendered
+    assert "819…" not in compressed
+    assert rendered.endswith("…") and compressed.endswith("…")
 
 
 def test_preview_is_not_final_report_pdf(tmp_path, monkeypatch):

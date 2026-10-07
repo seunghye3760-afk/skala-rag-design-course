@@ -2,7 +2,7 @@
 import pytest
 
 import kv_eval.llm
-from kv_eval.agents import domain, trl
+from kv_eval.agents import domain, market, stakeholder, trl
 from kv_eval.agents._judge import _CritScore
 from kv_eval.config import rubrics
 from kv_eval.graph.task_schema import Evidence, Locator, ScoreTask
@@ -44,7 +44,7 @@ def test_domain_maps_llm_output_and_na_without_llm(real_scoring, monkeypatch):
         criterion_id="DOM-3", score="4", evidence_ids=["e1", "ghost"],
         rationale="동시 세션 1.8배 실측. 5점은 처리량 동반 1.5배 근거가 없어 주지 않음.",
         confidence="medium", intra_conflict=False))
-    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: fake)
+    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda *_args: fake)
 
     task = ScoreTask(tech=TECH, agent_type="domain", criterion_ids=["DOM-3", "DOM-4"],
                      evidence=[_ev("e1", "DOM-3"), _ev("e2", "DOM-3", grade="D", stance="con")])
@@ -65,7 +65,7 @@ def test_one_llm_call_per_criterion(real_scoring, monkeypatch):
     fake = _FakeLLM(
         _CritScore(criterion_id="DOM-1", score="3", evidence_ids=["e1"], rationale="r", confidence="low"),
         _CritScore(criterion_id="DOM-2", score="2", evidence_ids=["e2"], rationale="r", confidence="low"))
-    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: fake)
+    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda *_args: fake)
 
     task = ScoreTask(tech=TECH, agent_type="domain", criterion_ids=["DOM-1", "DOM-2"],
                      evidence=[_ev("e1", "DOM-1"), _ev("e2", "DOM-2")])
@@ -79,7 +79,7 @@ def test_one_llm_call_per_criterion(real_scoring, monkeypatch):
 def test_prompt_contains_rubric_addon_and_evidence(real_scoring, monkeypatch):
     fake = _FakeLLM(_CritScore(criterion_id="DOM-3", score="3", evidence_ids=[],
                                rationale="r", confidence="low"))
-    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: fake)
+    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda *_args: fake)
 
     task = ScoreTask(tech=TECH, agent_type="domain", criterion_ids=["DOM-3"],
                      evidence=[_ev("e1", "DOM-3")])
@@ -90,6 +90,26 @@ def test_prompt_contains_rubric_addon_and_evidence(real_scoring, monkeypatch):
     assert "검증 범위 밖" in p                                       # prompts/score/domain.md 포함
     assert "인용(evidence_ids)한 근거의 claim·발췌에 있는 것만" in p  # rationale 수치 지시
     assert "(e1) [B|pro]" in p and "동시 세션 수가 1.8배" in p       # 근거 목록·발췌
+    assert "JSON 객체 1개" in p and "criterion_id는 반드시 DOM-3" in p
+    assert "JSON 배열" not in p and '"criterion_id": "DOM-4"' not in p
+
+
+@pytest.mark.parametrize(("module", "agent_type", "criterion_id"), [
+    (market, "market", "MKT-1"),
+    (stakeholder, "stakeholder", "STK-1"),
+])
+def test_batch_agent_prompt_matches_items_schema(module, agent_type, criterion_id):
+    task = ScoreTask(
+        tech=TECH,
+        agent_type=agent_type,
+        criterion_ids=[criterion_id],
+        evidence=[_ev("e1", criterion_id)],
+    )
+
+    system = module._build_messages(task, rubrics())[0]["content"]
+
+    assert "JSON 객체 1개" in system and "최상위 items 배열" in system
+    assert "JSON 배열만 출력" not in system and '"criterion_id": "DOM-4"' not in system
 
 
 def test_trl_uses_ordinal_scale_addon(real_scoring, monkeypatch):
@@ -97,7 +117,7 @@ def test_trl_uses_ordinal_scale_addon(real_scoring, monkeypatch):
         criterion_id="TRL-1", score="3", evidence_ids=["e1"],
         rationale="GPU 1대 표준 벤치마크 실측. 4점은 서빙 엔진 통합 측정 근거가 없어 주지 않음.",
         confidence="medium"))
-    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda: fake)
+    monkeypatch.setattr(kv_eval.llm, "chat_model", lambda *_args: fake)
 
     task = ScoreTask(tech=TECH, agent_type="trl", criterion_ids=["TRL-1"],
                      evidence=[_ev("e1", "TRL-1")])

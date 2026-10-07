@@ -19,6 +19,7 @@ import json
 import os
 from typing import Literal
 
+from openai import LengthFinishReasonError
 from pydantic import BaseModel, Field
 
 from .. import progress
@@ -50,6 +51,9 @@ COMMON_QUESTIONS: dict[str, str] = {
 }
 MAX_RETRIEVE = 2      # 실습 02-RelevanceCheck의 MAX_RETRIEVE_RETRY
 TOP_K = 5
+EXTRACT_MAX_TOKENS = 768
+REWRITE_MAX_TOKENS = 128
+LENGTH_RETRY_TOP_K = 2
 
 
 class BriefAnswer(BaseModel):
@@ -93,14 +97,43 @@ def _answer(tech: dict, question: str, extract, rewrite) -> dict:
     query = f"{tech['name']} {question}"
     for attempt in range(MAX_RETRIEVE):
         chunks = search(query, k=TOP_K, doc_ids=[tech["tech_id"]])
-        ans: BriefAnswer = extract.invoke({"tech": tech["name"], "question": question,
-                                           "context": format_chunks(chunks)})
+        ans = _invoke_extract(extract, tech["name"], question, chunks, format_chunks)
+        if ans is None:
+            return {
+                "value": "",
+                "status": "확인 불가",
+                "chunk_ids": [],
+                "locators": [],
+                "note": (
+                    f"구조화 요약이 {EXTRACT_MAX_TOKENS}토큰 출력 상한을 두 차례 초과해 "
+                    "자동 추출하지 못함"
+                ),
+            }
         if ans.relevant and ans.status != "미보고":
             return _validated(ans, chunks)
         if attempt + 1 < MAX_RETRIEVE:
             query = rewrite.invoke({"tech": tech["name"], "question": question, "query": query}).query
     return {"value": "", "status": "미보고", "chunk_ids": [], "locators": [],
             "note": f"재검색 {MAX_RETRIEVE}회 후에도 관련 청크를 찾지 못함 (설정한 검색 범위 기준)"}
+
+
+def _invoke_extract(extract, tech_name: str, question: str, chunks: list[Chunk], format_chunks) -> BriefAnswer | None:
+    """길이 초과 시 상위 청크만 남겨 한 번 재시도하고, 재실패는 호출자에게 알린다."""
+    payload = {"tech": tech_name, "question": question, "context": format_chunks(chunks)}
+    try:
+        return extract.invoke(payload)
+    except LengthFinishReasonError:
+        progress.step(
+            "tech_research",
+            f"{tech_name} 요약 출력 길이 초과 — 상위 {LENGTH_RETRY_TOP_K}개 청크로 1회 재시도",
+        )
+
+    payload["context"] = format_chunks(chunks[:LENGTH_RETRY_TOP_K])
+    try:
+        return extract.invoke(payload)
+    except LengthFinishReasonError:
+        progress.step("tech_research", f"{tech_name} 축약 재시도도 출력 길이 초과 — 확인 불가 처리")
+        return None
 
 
 def _validated(ans: BriefAnswer, chunks: list[Chunk]) -> dict:
@@ -127,17 +160,19 @@ def _prompts() -> dict[str, str]:
 
 def _chains():
     from langchain_core.prompts import ChatPromptTemplate
-    from langchain_openai import ChatOpenAI
 
     cfg = runtime()["llm"]
     if not cfg.get("model"):
         raise ValueError("configs/runtime.yaml llm.model 이 비어 있습니다 (팀에서 모델명 확정 필요)")
-    llm = ChatOpenAI(model=cfg["model"], temperature=cfg.get("temperature", 0))
+    from ..llm import chat_model
+
+    extract_llm = chat_model(EXTRACT_MAX_TOKENS)
+    rewrite_llm = chat_model(REWRITE_MAX_TOKENS)
     p = _prompts()
     extract = (ChatPromptTemplate.from_messages([("system", p["extract_system"]), ("human", p["extract_user"])])
-               | llm.with_structured_output(BriefAnswer))
+               | extract_llm.with_structured_output(BriefAnswer))
     rewrite = (ChatPromptTemplate.from_messages([("system", p["rewrite_system"]), ("human", p["rewrite_user"])])
-               | llm.with_structured_output(RewrittenQuery))
+               | rewrite_llm.with_structured_output(RewrittenQuery))
     return extract, rewrite
 
 

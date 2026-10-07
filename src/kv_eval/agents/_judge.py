@@ -8,7 +8,6 @@ KV_FAKE=1 이면 가짜 채점을 돌려준다 (그래프 뼈대 테스트용).
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Literal
 
@@ -17,6 +16,8 @@ from pydantic import BaseModel
 from ..config import ROOT
 from ..graph.task_schema import CriterionResult, Evidence, EvidenceBrief, ScoreTask
 from ._fake import fake_scores
+
+SCORE_MAX_TOKENS = 1024
 
 
 class _CritScore(BaseModel):
@@ -52,7 +53,7 @@ def llm_scores(task: ScoreTask, rubrics: dict, agent: str, prompt_file: str) -> 
         from ..llm import chat_model
 
         prompt = _build_prompt(task, rubrics, agent, prompt_file, [cid], by_cid)
-        r = chat_model().with_structured_output(_CritScore).invoke(prompt)
+        r = chat_model(SCORE_MAX_TOKENS).with_structured_output(_CritScore).invoke(prompt)
         briefs = [EvidenceBrief(evidence_id=i, claim=pool[i].claim, source=pool[i].source_title,
                                 date=pool[i].published_at, grade=pool[i].evidence_grade,
                                 stance=pool[i].stance)
@@ -98,7 +99,11 @@ def _build_prompt(task: ScoreTask, rubrics: dict, agent: str, prompt_file: str,
         "{tech}": task.tech["name"],
         "{agent_addon}": addon,
         "{criteria_block}": "\n\n".join(blocks),
-        "{schema}": json.dumps(rubrics["judge"]["output_schema"], ensure_ascii=False, indent=2),
+        "{output_instruction}": (
+            f"API가 요구하는 JSON 객체 1개를 반환한다. criterion_id는 반드시 {cids[0]}로 쓴다. "
+            "evidence_ids에는 [근거 목록]에 실제로 있는 evidence_id만 넣고, "
+            "score·rationale·confidence·intra_conflict 필드를 빠짐없이 채운다."
+        ),
     }.items():
         prompt = prompt.replace(key, value)
     return prompt

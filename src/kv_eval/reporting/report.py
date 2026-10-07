@@ -15,7 +15,7 @@ from ..rules.report_quality import (
     compress_report,
     evaluate_report,
 )
-from .pdf import persist_preview, render_preview
+from .pdf import persist_preview, preview_path, render_preview
 
 _GRADE_KO = {"A": "독립 실측/공식 공시", "B": "당사자 실측/발표",
              "C": "시뮬레이션/추정", "D": "2차 자료"}
@@ -43,11 +43,35 @@ def _one_sentence(text: str, limit: int = 170) -> str:
     sentence = match.group(0).strip() if match else text
     if len(sentence) <= limit:
         return sentence
-    return sentence[:limit - 1].rstrip() + "…"
+    clipped = sentence[:limit - 1].rstrip()
+    if clipped and not sentence[len(clipped):].startswith((" ", "\t", "\n")):
+        boundary = clipped.rsplit(" ", 1)[0].rstrip()
+        if boundary:
+            clipped = boundary
+    return clipped.rstrip(".,;:") + "…"
 
 
-def _evidence_refs(ids: list[str]) -> str:
-    return ", ".join(f"EVIDENCE:{evidence_id}" for evidence_id in ids) or "(정보 공백)"
+def _representative_evidence(briefs: list, limit: int = 2) -> list:
+    """보고서에는 stance별 대표 인용만 싣고 전체 목록은 evidence.json에 보존한다."""
+    selected = []
+    for stance in ("pro", "con"):
+        brief = next((item for item in briefs if item.stance == stance), None)
+        if brief and brief.evidence_id not in {item.evidence_id for item in selected}:
+            selected.append(brief)
+    for brief in briefs:
+        if len(selected) >= limit:
+            break
+        if brief.evidence_id not in {item.evidence_id for item in selected}:
+            selected.append(brief)
+    return selected[:limit]
+
+
+def _evidence_refs(ids: list[str], *, total_count: int | None = None) -> str:
+    unique = list(dict.fromkeys(ids))
+    refs = ", ".join(f"EVIDENCE:{evidence_id}" for evidence_id in unique) or "(정보 공백)"
+    if total_count is not None and total_count > len(unique):
+        refs += " (나머지는 evidence.json)"
+    return refs
 
 
 def _conditions(state: MainState, tech_id: str, criterion_id: str) -> str:
@@ -56,7 +80,11 @@ def _conditions(state: MainState, tech_id: str, criterion_id: str) -> str:
         for evidence in state.get("evidence_pool", [])
         if evidence.tech_id == tech_id and evidence.criterion_id == criterion_id and evidence.conditions
     })
-    return "; ".join(conditions) or "(공개 조건 없음)"
+    if not conditions:
+        return "(공개 조건 없음)"
+    shown = [_one_sentence(condition, 70) for condition in conditions[:2]]
+    suffix = "; 나머지는 evidence.json" if len(conditions) > len(shown) else ""
+    return "; ".join(shown) + suffix
 
 
 def _summary(state: MainState, names: dict[str, str], assessment: dict) -> list[str]:
@@ -86,9 +114,13 @@ def _scope_and_method(state: MainState) -> list[str]:
 
 def _result_row(state: MainState, result) -> str:
     score = result.score if result.raw_score in (None, result.score) else f"{result.score} (원 {result.raw_score})"
-    evidence = _evidence_refs([brief.evidence_id for brief in result.evidence])
+    representative = _representative_evidence(result.evidence)
+    evidence = _evidence_refs(
+        [brief.evidence_id for brief in representative],
+        total_count=len(result.evidence),
+    )
     condition = _conditions(state, result.tech_id, result.criterion_id)
-    rationale = _one_sentence(result.rationale)
+    rationale = _one_sentence(result.rationale, 110)
     return (f"| {result.criterion_id} | {_cell(score)} / {result.confidence} | {evidence} | "
             f"{condition} | {rationale} |")
 
@@ -117,7 +149,7 @@ def _tech_section(
     conflicts = [item for item in state.get("conflicts", []) if item.tech_id == tech_id]
     if conflicts:
         for conflict in conflicts:
-            refs = _evidence_refs(conflict.evidence_refs)
+            refs = _evidence_refs(conflict.evidence_refs[:2], total_count=len(conflict.evidence_refs))
             lines.append(f"- {conflict.comparison_id}: {conflict.interpretation or conflict.status}; {refs}")
     else:
         lines.append("- 확인된 상충 후보 없음")
@@ -149,7 +181,7 @@ def _comparison(state: MainState, assessment: dict) -> list[str]:
     for conflict in state.get("conflicts", []):
         lines.append(f"| {names.get(conflict.tech_id, conflict.tech_id)} | {conflict.comparison_id} | "
                      f"{_cell(conflict.interpretation or conflict.status)} | "
-                     f"{_evidence_refs(conflict.evidence_refs)} |")
+                     f"{_evidence_refs(conflict.evidence_refs[:2], total_count=len(conflict.evidence_refs))} |")
     if not state.get("conflicts"):
         lines.append("| - | 확인된 후보 없음 | 판단 유보 | (정보 공백) |")
     lines.append("")
@@ -171,7 +203,12 @@ def _limits_and_gaps(state: MainState, assessment: dict) -> list[str]:
     lines = ["## 6. 한계와 정보 공백", "", "### 정보 공백", ""]
     gaps = state.get("info_gaps", [])
     if gaps:
-        lines += [f"- {gap.tech_id} {gap.criterion_id}: {_one_sentence(gap.reason)}" for gap in gaps]
+        by_tech: dict[str, list] = {}
+        for gap in gaps:
+            by_tech.setdefault(gap.tech_id, []).append(gap)
+        for tech_id, tech_gaps in by_tech.items():
+            criteria = ", ".join(dict.fromkeys(gap.criterion_id for gap in tech_gaps))
+            lines.append(f"- {tech_id}: {criteria} — 상세 실패 사유와 재시도 이력은 info_gaps.json 참조")
     else:
         lines.append("- 재시도 한도 뒤 별도로 남은 정보 공백 없음")
     lines += ["", "### 평가 한계", ""]
@@ -191,8 +228,12 @@ def _limits_and_gaps(state: MainState, assessment: dict) -> list[str]:
 
 
 def _reference(state: MainState) -> list[str]:
-    cited = {brief.evidence_id for result in state.get("final_results", []) for brief in result.evidence}
-    cited.update(ref for conflict in state.get("conflicts", []) for ref in conflict.evidence_refs)
+    cited = {
+        brief.evidence_id
+        for result in state.get("final_results", [])
+        for brief in _representative_evidence(result.evidence)
+    }
+    cited.update(ref for conflict in state.get("conflicts", []) for ref in conflict.evidence_refs[:2])
     evidence_by_id = {evidence.evidence_id: evidence for evidence in state.get("evidence_pool", [])}
     lines = ["## REFERENCE", "", "> 본문에서 실제 인용한 출처만 수록한다.", ""]
     groups: dict[tuple, list] = {}
@@ -285,10 +326,28 @@ def persist_report(state: MainState) -> dict:
     return {"report_path": str(md_path)}
 
 
+def persist_failed_report(state: MainState) -> dict:
+    """최종 gate 실패 시에도 진단 가능한 초안과 상세 JSON을 보존한다."""
+    run_dir = output_root() / state.get("run_id", "run")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    md_path = run_dir / "report.failed.md"
+    md_path.write_text(state.get("report_draft", ""), encoding="utf-8")
+    _dump(run_dir / "evidence.json", state.get("evidence_pool", []))
+    _dump(run_dir / "scores.json", state.get("final_results", []))
+    _dump(run_dir / "search_log.json", state.get("search_log", []))
+    _dump(run_dir / "info_gaps.json", state.get("info_gaps", []))
+
+    preview = preview_path(state)
+    if preview.exists():
+        preview.replace(run_dir / "report.failed.pdf")
+    progress.step("persist_failed_report", f"최종 gate 실패 초안 저장: {md_path}")
+    return {"report_failure_path": str(md_path)}
+
+
 def _report_updates(state: MainState) -> dict:
     keys = (
         "conflicts", "final_assessment", "report_draft", "report_quality",
-        "report_retry_round", "report_page_count", "report_path",
+        "report_retry_round", "report_page_count", "report_path", "report_failure_path",
     )
     return {key: state[key] for key in keys if key in state}
 
@@ -301,6 +360,7 @@ def finalize_report(state: MainState) -> dict:
         quality = current["report_quality"]
         if not quality.passed:
             if quality.retry_kind != "rewrite":
+                current.update(persist_failed_report(current))
                 return _report_updates(current)
             if current.get("report_retry_round", 0) >= MAX_COMPRESSION_ROUNDS:
                 issues = [*quality.issues, "보고서 재작성·압축 재시도 한도(2) 소진"]
@@ -308,6 +368,7 @@ def finalize_report(state: MainState) -> dict:
                     "issues": issues,
                     "retry_kind": None,
                 })
+                current.update(persist_failed_report(current))
                 return _report_updates(current)
             current.update(rewrite_report(current))
             continue
@@ -318,9 +379,11 @@ def finalize_report(state: MainState) -> dict:
             current.update(persist_report(current))
             return _report_updates(current)
         if quality.retry_kind != "compress":
+            current.update(persist_failed_report(current))
             return _report_updates(current)
         if current.get("report_retry_round", 0) >= MAX_COMPRESSION_ROUNDS:
             current.update(compress_report(current))
+            current.update(persist_failed_report(current))
             return _report_updates(current)
         current.update(compress_report(current))
 

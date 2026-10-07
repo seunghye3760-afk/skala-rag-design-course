@@ -2,16 +2,14 @@
 STK-1~4 채점. 근거마다 발언 주체 유형과 이해당사자 여부 표기 (설계서 D-8)."""
 from __future__ import annotations
 
-import json
-
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from ..config import ROOT, criterion, runtime
+from ..config import ROOT, criterion
 from ..graph.task_schema import Confidence, CriterionResult, Evidence, EvidenceBrief, Score, ScoreTask
 
 AGENT = "stakeholder"
 PROMPT_FILE = "prompts/score/stakeholder.md"
+BATCH_SCORE_MAX_TOKENS = 2048
 
 
 class _LLMCriterionScore(BaseModel):
@@ -75,7 +73,11 @@ def _build_messages(task: ScoreTask, rub: dict) -> list[dict]:
         tech=tech_name,
         agent_addon=f"{agent_cfg['judge_addon']}\n\n{addon}",
         criteria_block=_criteria_block(rub, task.criterion_ids),
-        schema=json.dumps(rub["judge"]["output_schema"], ensure_ascii=False, indent=2),
+        output_instruction=(
+            "API가 요구하는 JSON 객체 1개를 반환한다. 최상위 items 배열에 요청된 평가 항목마다 "
+            "객체를 정확히 1개씩 넣고, 각 객체의 evidence_ids에는 아래 근거 목록에 실제로 있는 "
+            "evidence_id만 넣는다."
+        ),
     )
     brief = task.tech_brief.get("summary") if task.tech_brief else None
     user = (
@@ -87,9 +89,9 @@ def _build_messages(task: ScoreTask, rub: dict) -> list[dict]:
 
 def _get_llm():
     """LLM 클라이언트 생성 지점. 테스트에서는 monkeypatch로 교체한다."""
-    cfg = runtime()["llm"]
-    model = cfg.get("model") or "gpt-4.1-mini"
-    return ChatOpenAI(model=model, temperature=cfg.get("temperature", 0)).with_structured_output(
+    from ..llm import chat_model
+
+    return chat_model(BATCH_SCORE_MAX_TOKENS).with_structured_output(
         _LLMScoreBatch
     )
 

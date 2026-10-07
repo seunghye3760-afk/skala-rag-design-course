@@ -27,12 +27,15 @@ def latest_results(
 
 
 def evidence_for(pool: list[Evidence], tech_id: str, criterion_id: str) -> list[Evidence]:
+    """셀의 근거를 반환하되 round가 달라도 같은 출처·방향·주장은 한 번만 쓴다."""
     seen: set[str] = set()
     out: list[Evidence] = []
     for e in pool:
         if e.tech_id != tech_id or e.criterion_id != criterion_id or not e.relevant:
             continue
-        key = e.duplicate_group or e.evidence_id
+        source = (e.source_url or e.source_title).strip().lower()
+        claim = " ".join(e.claim.lower().split())[:160]
+        key = f"{source}|{e.stance}|{claim}"
         if key in seen:
             continue
         seen.add(key)

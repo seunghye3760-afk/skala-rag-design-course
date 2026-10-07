@@ -1048,23 +1048,15 @@
     ]
   },
   "judge": {
-    "common_prompt": "너는 {agent_title}다. AI 데이터센터 LLM 추론 인프라를 운영하는 사업자의 관점에서, 기술 1건({tech})을 아래 평가 항목별로 채점한다.\n\n[원칙]\n1. 우열 판정 금지: 이 기술만 채점한다. 다른 기술과 비교하거나 순위를 매기지 않는다.\n2. 제공된 근거만 사용: evidence 목록에 없는 사실·수치를 만들지 않는다.\n3. 근거 등급: 근거마다 A(독립 실측·공식 공시) / B(개발 주체·이해당사자 실측·발표) / C(시뮬레이션·추정) / D(원출처 불명 2차 자료, 조건 없는 수치)를 매긴다.\n4. 상한·하한: 최고 등급이 B면 최대 4점, C·D뿐이면 최대 3점. 부정 근거가 C·D뿐이면 최저 2점.\n5. 균형: 긍정(pro)·비판(con) 근거를 모두 검토한다. 한쪽만 있으면 rationale에 \"비판 근거 미확인\"처럼 적는다.\n6. 조건 명시: 수치는 조건(모델, 문맥 길이, 설정, HW)과 함께 인용한다.\n7. N/A: 관련 근거가 0건일 때만 score를 \"NA\"로 한다. 부정 근거가 있으면 N/A가 아니라 점수를 준다.\n8. 루브릭 문구에 가장 가까운 점수를 고르고, 바로 위 점수를 주지 않은 이유를 rationale에 한 문장 넣는다.\n9. 한 항목 안에서 B등급 이상 근거가 서로 반대면 intra_conflict=true로 하고 조건 차이를 설명한다.\n10. confidence: high = A등급 근거 포함 + 긍정·비판 모두 검토 / medium = B등급 중심이거나 한쪽 근거만 / low = C·D등급 중심.\n\n[에이전트 추가 지시]\n{agent_addon}\n\n[평가 항목과 루브릭]\n{criteria_block}\n\n[출력] JSON 배열만 출력한다. 항목당 객체 1개:\n{schema}",
+    "common_prompt": "너는 {agent_title}다. AI 데이터센터 LLM 추론 인프라를 운영하는 사업자의 관점에서, 기술 1건({tech})을 아래 평가 항목별로 채점한다.\n\n[원칙]\n1. 우열 판정 금지: 이 기술만 채점한다. 다른 기술과 비교하거나 순위를 매기지 않는다.\n2. 제공된 근거만 사용: evidence 목록에 없는 사실·수치를 만들지 않는다.\n3. 근거 등급: 근거마다 A(독립 실측·공식 공시) / B(개발 주체·이해당사자 실측·발표) / C(시뮬레이션·추정) / D(원출처 불명 2차 자료, 조건 없는 수치)를 매긴다.\n4. 상한·하한: 최고 등급이 B면 최대 4점, C·D뿐이면 최대 3점. 부정 근거가 C·D뿐이면 최저 2점.\n5. 균형: 긍정(pro)·비판(con) 근거를 모두 검토한다. 한쪽만 있으면 rationale에 \"비판 근거 미확인\"처럼 적는다.\n6. 조건 명시: 수치는 조건(모델, 문맥 길이, 설정, HW)과 함께 인용한다.\n7. N/A: 관련 근거가 0건일 때만 score를 \"NA\"로 한다. 부정 근거가 있으면 N/A가 아니라 점수를 준다.\n8. 루브릭 문구에 가장 가까운 점수를 고르고, 바로 위 점수를 주지 않은 이유를 rationale에 한 문장 넣는다.\n9. 한 항목 안에서 B등급 이상 근거가 서로 반대면 intra_conflict=true로 하고 조건 차이를 설명한다.\n10. confidence: high = A등급 근거 포함 + 긍정·비판 모두 검토 / medium = B등급 중심이거나 한쪽 근거만 / low = C·D등급 중심.\n\n[에이전트 추가 지시]\n{agent_addon}\n\n[평가 항목과 루브릭]\n{criteria_block}\n\n[출력]\n{output_instruction}",
     "output_schema": {
-      "criterion_id": "DOM-4",
-      "tech": "TurboQuant",
+      "criterion_id": "요청된 평가 항목 ID",
       "score": "1~5 정수 또는 \"NA\"",
-      "evidence": [
-        {
-          "claim": "주장 요약 (조건 포함)",
-          "source": "URL 또는 논문명 p.N",
-          "date": "YYYY-MM-DD",
-          "grade": "A|B|C|D",
-          "stance": "pro|con"
-        }
+      "evidence_ids": [
+        "근거 목록에 실제로 존재하는 evidence_id"
       ],
       "rationale": "점수 근거 2~3문장 + 바로 위 점수를 주지 않은 이유 1문장",
       "confidence": "high|medium|low",
-      "cap_applied": "예: 'B 최고 등급 → 최대 4' 또는 null",
       "intra_conflict": false
     }
   }

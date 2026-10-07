@@ -219,7 +219,7 @@ def _extract(task: CollectTask, text: str, hint_source: str) -> list[_Item]:
 
     from ..llm import chat_model
 
-    llm = chat_model()
+    llm = chat_model(2048)
     crit = task.criterion
     # v2: 추출 프롬프트가 바뀌면(예: PR#5 cited_primary_type 추가) 캐시를 자연 무효화하는 버전 태그
     f = cache_file("extract", f"v2|{llm.model_name}|{task.tech['tech_id']}|{crit['id']}|"
@@ -303,7 +303,7 @@ def _rewrite_queries(task: CollectTask, queries: dict) -> dict:
 힌트: {hint}
 기존 긍정 쿼리: {queries['pro']}
 기존 비판 쿼리: {queries['con']}"""
-    new = chat_model().with_structured_output(_Rewrite).invoke(prompt)
+    new = chat_model(256).with_structured_output(_Rewrite).invoke(prompt)
     return {"pro": [new.pro], "con": [new.con]}
 
 

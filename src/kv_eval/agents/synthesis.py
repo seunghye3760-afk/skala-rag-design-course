@@ -21,13 +21,14 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .. import progress
-from ..config import ROOT, runtime
+from ..config import ROOT
 from ..graph.state import MainState
 from ..graph.task_schema import ConflictCandidate, TechId
 
 PROMPT_FILE = "prompts/synthesis.md"
 Interpretation = Literal["관점 간 상충", "조건 차이", "근거 부족"]
 _INTERPRETATIONS = ("관점 간 상충", "조건 차이", "근거 부족")
+SYNTHESIS_MAX_TOKENS = 4096
 
 
 class _ConflictInterpretation(BaseModel):
@@ -134,10 +135,9 @@ def _build_messages(state: MainState) -> list[dict]:
 
 
 def _get_llm():
-    from langchain_openai import ChatOpenAI  # 무거운 라이브러리는 함수 안에서 import
-    rt = runtime()["llm"]
-    model = rt.get("model") or "gpt-4.1-mini"
-    return ChatOpenAI(model=model, temperature=rt.get("temperature", 0)).with_structured_output(_Synthesis)
+    from ..llm import chat_model
+
+    return chat_model(SYNTHESIS_MAX_TOKENS).with_structured_output(_Synthesis)
 
 
 def _apply(state: MainState, out: _Synthesis) -> dict:
