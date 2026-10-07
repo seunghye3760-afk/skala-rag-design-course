@@ -28,6 +28,22 @@ def _names(state: MainState) -> dict:
     return {t["tech_id"]: t["name"] for t in state["technologies"]}
 
 
+def _short(text: str, n: int) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def _brief_val(state: MainState, tech_id: str, field: str, n: int = 140) -> str:
+    """tech_briefs[tech][field]는 실제 실행에서 {"value","status",…} dict, 가짜 모드에서는 문자열."""
+    v = (state.get("tech_briefs") or {}).get(tech_id, {}).get(field)
+    if isinstance(v, dict):
+        status, value = v.get("status") or "미보고", str(v.get("value") or "").strip()
+        if not value:
+            return f"({status})"
+        return _short(value, n) + ("" if status == "reported" else f" [{status}]")
+    return _short(v, n) if v else "(미보고)"
+
+
 # ---------- SUMMARY ----------
 
 def _summary(state: MainState, names: dict, assessment: dict) -> list[str]:
@@ -61,10 +77,25 @@ def _ch1(state: MainState) -> list[str]:
            f"우선 지표: {', '.join(dcfg['priority_metrics'])}.", ""]
 
 
+_GRADE_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3}
+
+
 def _tech_conditions(state: MainState, tech_id: str, cid: str) -> set[str]:
     pool = state.get("evidence_pool", [])
     return {(e.conditions or "").strip() for e in pool if e.tech_id == tech_id and e.criterion_id == cid
            and (e.conditions or "").strip()}
+
+
+def _representative_condition(state: MainState, tech_id: str, cid: str) -> str:
+    """최고 등급 근거의 조건 중 모델·문맥 길이·하드웨어 정보가 가장 많이 담긴 것 하나."""
+    pool = [e for e in state.get("evidence_pool", []) if e.tech_id == tech_id and e.criterion_id == cid
+            and (e.conditions or "").strip()]
+    if not pool:
+        return ""
+    best = min(_GRADE_ORDER[e.evidence_grade] for e in pool)
+    cands = [e.conditions.strip() for e in pool if _GRADE_ORDER[e.evidence_grade] == best]
+    keys = ("B", "token", "GPU", "H100", "A100", "ctx", "context", "bit", "batch", "nm", "Xeon", "모델", "문맥")
+    return max(cands, key=lambda c: (sum(k in c for k in keys), -abs(len(c) - 70)))
 
 
 def _ch2(state: MainState, names: dict) -> list[str]:
@@ -77,21 +108,31 @@ def _ch2(state: MainState, names: dict) -> list[str]:
              f"{'데이터 표현의 압축' if tid == 'turboquant' else '저장·계산 구조의 재구성'}", "",
              f"분류: {t.get('group', '?')} / {t.get('category', '?')}", ""]
     L += ["### 2.3 기술 구조 비교표", "",
-         "| 구분 | KV cache 접근 방식 | 해결 대상 병목 |", "|---|---|---|"]
+         "논문 brief(tech_research, 설계서 B-3)에서 추출한 값. '(미보고)'는 논문에 해당 내용이 없다는 뜻.", "",
+         "| 구분 | 분류 | KV cache 구성 | 처리 구조 | 적용 한계 |", "|---|---|---|---|---|"]
     for tid in ("turboquant", "cxl_pnm"):
         t = by_id.get(tid, {})
-        L.append(f"| {names.get(tid, tid)} | {t.get('category', '?')} | (agents/domain.py DOM-1~3 근거 참고) |")
+        L.append(f"| {names.get(tid, tid)} | {t.get('group', '?')} / {t.get('category', '?')} | "
+                 f"{_brief_val(state, tid, 'kv_cache_구성')} | {_brief_val(state, tid, '처리_구조')} | "
+                 f"{_brief_val(state, tid, '적용_한계')} |")
     L += ["", "### 2.4 실험 근거 비교표 — 실험 조건이 다르면 '직접 비교 불가'", "",
          "코드로 기계적 판정: 두 기술 모두 근거가 있고 조건(conditions) 문자열이 같으면 "
          "'비교 가능', 근거는 있지만 조건이 다르면 '직접 비교 불가', 한쪽만 있으면 '정보 부족'.", "",
+         "조건 열은 '건수 · 대표 조건 1개'만 표시한다 (전체 조건 문자열은 부록 A·evidence.json).", "",
          "| 항목 | TurboQuant 조건 | CXL-PNM 조건 | 판정 |", "|---|---|---|---|"]
+
+    def _cond_cell(conds: set[str], tid: str, cid: str) -> str:
+        if not conds:
+            return "(없음)"
+        return f"{len(conds)}건 · {_short(_representative_condition(state, tid, cid), 90)}"
+
     for c in state["rubrics"]["criteria"]:
         cid = c["id"]
         a, b = _tech_conditions(state, "turboquant", cid), _tech_conditions(state, "cxl_pnm", cid)
         if not a and not b:
             continue
         verdict = "정보 부족" if not a or not b else ("비교 가능" if a & b else "직접 비교 불가")
-        L.append(f"| {cid} | {'; '.join(a) or '(없음)'} | {'; '.join(b) or '(없음)'} | {verdict} |")
+        L.append(f"| {cid} | {_cond_cell(a, 'turboquant', cid)} | {_cond_cell(b, 'cxl_pnm', cid)} | {verdict} |")
     L.append("")
     return L
 
@@ -125,9 +166,22 @@ def _ch3(state: MainState) -> list[str]:
 
 # ---------- 4~5. 기술별 평가 결과 ----------
 
-def _criterion_row(r) -> str:
-    return (f"| {r.criterion_id} | {r.score} | {r.raw_score} | {r.confidence} | {r.cap_applied or ''} | "
-           f"{', '.join(b.evidence_id for b in r.evidence)} |")
+def _criterion_row(r, pub_by_id: dict[str, str] | None = None) -> str:
+    """근거 열: 등급 분포(pro/con)와 발행 주체 2곳까지. evidence_id 전체 목록은 부록 A에."""
+    grades = {}
+    for b in r.evidence:
+        grades[b.grade] = grades.get(b.grade, 0) + 1
+    dist = " ".join(f"{g}{grades[g]}" for g in ("A", "B", "C", "D") if g in grades)
+    pro = sum(1 for b in r.evidence if b.stance == "pro")
+    con = len(r.evidence) - pro
+    srcs = []
+    for b in r.evidence:
+        name = _short((pub_by_id or {}).get(b.evidence_id) or b.source, 28)
+        if name not in srcs:
+            srcs.append(name)
+    src_txt = "; ".join(srcs[:2]) + (f" 외 {len(srcs) - 2}" if len(srcs) > 2 else "")
+    ev = f"{len(r.evidence)}건 ({dist}, pro {pro}/con {con}) — {src_txt}" if r.evidence else "(근거 없음)"
+    return f"| {r.criterion_id} | {r.score} | {r.raw_score} | {r.confidence} | {r.cap_applied or ''} | {ev} |"
 
 
 def _tech_chapter(state: MainState, tech_id: str, names: dict, assessment: dict, num: int) -> list[str]:
@@ -138,18 +192,23 @@ def _tech_chapter(state: MainState, tech_id: str, names: dict, assessment: dict,
     for r in results:
         by_agent.setdefault(r.agent_type, []).append(r)
     trl = next((tr for tr in state.get("trl_results", []) if tr.tech_id == tech_id), None)
+    pub_by_id = {e.evidence_id: e.publisher for e in state.get("evidence_pool", [])}
 
     L = [f"## {num}. {names[tech_id]} 평가 결과", "",
         f"### {num}.1 {agent_titles['trl']} — 기법 TRL / 기반 부품 성숙도", ""]
     if trl:
+        met = [t for t in trl.gate_trace if "충족" in t and "미충족" not in t]
+        unmet = [t for t in trl.gate_trace if "미충족" in t]
+        first_unmet = unmet[0].replace("조건 미충족: ", " 미충족 (") + ")" if unmet else ""
         L += [f"TRL {trl.trl_level} (확신도 {trl.trl_confidence}, {trl.note}), "
-             f"기반 부품 성숙도(TRL-5) {trl.component_maturity}", "", "게이트 추적:"] + \
-            [f"- {t}" for t in trl.gate_trace] + [""]
+             f"기반 부품 성숙도(TRL-5) {trl.component_maturity}", "",
+             f"게이트: {met[-1].split(' 조건')[0] if met else 'TRL 1'}까지 충족"
+             + (f", {first_unmet}" if first_unmet else "") + " — 전체 추적은 부록 A.", ""]
     for i, agent in enumerate(("market", "stakeholder", "domain"), start=2):
         L += [f"### {num}.{i} {agent_titles[agent]}", "",
              "| 항목 | 점수 | 원점수 | 확신도 | 상한 적용 | 근거 |", "|---|---|---|---|---|---|"]
         for r in sorted(by_agent.get(agent, []), key=lambda r: r.criterion_id):
-            L.append(_criterion_row(r))
+            L.append(_criterion_row(r, pub_by_id))
         L.append("")
     L += [f"### {num}.5 관점 간 상충 지점과 정보 공백 (P1~P6)", ""]
     own = [c for c in state.get("conflicts", []) if c.tech_id == tech_id]
@@ -242,11 +301,18 @@ def _appendix(state: MainState) -> list[str]:
 def _reference(state: MainState) -> list[str]:
     cited = {b.evidence_id for r in state.get("final_results", []) for b in r.evidence}
     refs = [e for e in state.get("evidence_pool", []) if e.evidence_id in cited]
-    L = ["## REFERENCE", "", "> 보고서 본문에서 실제로 인용한 자료만 수록. 검색했지만 인용하지 않은 "
-        "자료는 부록 B 검색 로그에만 남긴다.", ""]
+    L = ["## REFERENCE", "", "> 보고서 본문에서 실제로 인용한 자료만 출처 단위로 수록(같은 출처의 근거 여러 건은 1줄, "
+        "근거별 evidence_id는 부록 A). 검색했지만 인용하지 않은 자료는 부록 B 검색 로그에만 남긴다.", ""]
+    order = {"A": 0, "B": 1, "C": 2, "D": 3}
+    groups: dict[tuple, list] = {}
     for e in refs:
-        L.append(f"- [{e.evidence_grade}] {e.source_title} — {e.publisher}, {e.published_at or 'n.d.'}, "
-                f"{e.source_url or e.locator.doc_id} (확인일 {e.accessed_at})")
+        groups.setdefault((e.source_url or e.locator.doc_id or e.source_title, e.source_title, e.publisher), []).append(e)
+    rows = []
+    for (loc, title, publisher), es in groups.items():
+        best = min(es, key=lambda e: order[e.evidence_grade])
+        rows.append((order[best.evidence_grade], title, f"- [{best.evidence_grade}] {_short(title, 90)} — {publisher}, "
+                     f"{best.published_at or 'n.d.'}, {loc} (확인일 {best.accessed_at}; 인용 근거 {len(es)}건)"))
+    L += [r[2] for r in sorted(rows)]
     return L
 
 
