@@ -1,297 +1,311 @@
-"""보고서 조립 (설계서 E 목차 초안). SUMMARY가 맨 앞, REFERENCE(실제 인용한 자료만)가 맨 끝.
-담당 4.
-
-report_path는 항상 report.md를 가리킨다 (tests/test_graph_runs.py가 이 경로를 텍스트로
-읽어 "## " 제목 줄을 검사하므로 바꾸면 안 된다). report.pdf는 report.md 옆에 추가로
-만들어질 뿐이고, 한글 폰트를 못 찾거나 PDF 조립이 실패해도 report.md는 그대로 만들어진다
-(그래프가 마지막 노드에서 죽지 않게 한다 — reporting/pdf.py의 render_pdf 참고).
-"""
+"""보고서 초안, 품질 검사, PDF 검증, 최종 저장을 순서대로 조합한다."""
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
 from .. import progress
 from ..agents.synthesis import synthesize
 from ..config import output_root, technologies_config
 from ..graph.state import MainState
-from .pdf import render_pdf
+from ..rules.report_quality import (
+    MAX_COMPRESSION_ROUNDS,
+    MAX_REPORT_PAGES,
+    compress_report,
+    evaluate_report,
+)
+from .pdf import persist_preview, render_preview
 
-_GRADE_KO = {"A": "독립 실측/공식 공시", "B": "당사자 실측/발표", "C": "시뮬레이션/추정", "D": "2차 자료"}
-
-
-def _dump(path, items):
-    path.write_text(json.dumps([i.model_dump() if hasattr(i, "model_dump") else i for i in items],
-                               ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _names(state: MainState) -> dict:
-    return {t["tech_id"]: t["name"] for t in state["technologies"]}
+_GRADE_KO = {"A": "독립 실측/공식 공시", "B": "당사자 실측/발표",
+             "C": "시뮬레이션/추정", "D": "2차 자료"}
 
 
-# ---------- SUMMARY ----------
-
-def _summary(state: MainState, names: dict, assessment: dict) -> list[str]:
-    rub = state["rubrics"]
-    L = ["## SUMMARY", "", f"핵심 질문: {rub['meta']['core_question']}", ""]
-    for tr in state.get("trl_results", []):
-        L.append(f"- {names[tr.tech_id]}: TRL {tr.trl_level} (공개 정보 기반 추정, 하한, 확신도 "
-                 f"{tr.trl_confidence}) / 기반 부품 성숙도 {tr.component_maturity}")
-        a = assessment.get(tr.tech_id)
-        if a and a.get("요약"):
-            L.append(f"  {a['요약']}")
-    cand = [c for c in state.get("conflicts", []) if c.status == "candidate"]
-    gap = [c for c in state.get("conflicts", []) if c.status == "info_gap"]
-    L += ["", f"주요 상충 지점 후보 {len(cand)}건, 정보 공백으로 판단이 유보된 비교 {len(gap)}건 "
-             "(4~5장 참고).", ""]
-    return L
+def _dump(path: Path, items) -> None:
+    path.write_text(json.dumps(
+        [item.model_dump() if hasattr(item, "model_dump") else item for item in items],
+        ensure_ascii=False,
+        indent=2,
+    ), encoding="utf-8")
 
 
-# ---------- 1. 개요 / 2. 대상 기술 개요 / 3. 평가 방법 ----------
-
-def _ch1(state: MainState) -> list[str]:
-    rub = state["rubrics"]
-    dcfg = technologies_config()["domain"]
-    return ["## 1. 개요", "",
-           "### 1.1 배경: 장문 LLM 추론과 KV cache 병목", "",
-           f"평가 대상: {dcfg['name']} ({dcfg['evaluator']}), 주요 워크로드: {dcfg['workload']}.", "",
-           "### 1.2 평가 목적과 핵심 질문", "", rub["meta"]["core_question"], "",
-           "### 1.3 평가 원칙", "", rub["meta"]["principle"], "",
-           "### 1.4 분석 범위와 제외 범위", "",
-           f"평가 시나리오: {' / '.join(dcfg['scenarios'])}. "
-           f"우선 지표: {', '.join(dcfg['priority_metrics'])}.", ""]
+def _names(state: MainState) -> dict[str, str]:
+    return {tech["tech_id"]: tech["name"] for tech in state["technologies"]}
 
 
-def _tech_conditions(state: MainState, tech_id: str, cid: str) -> set[str]:
-    pool = state.get("evidence_pool", [])
-    return {(e.conditions or "").strip() for e in pool if e.tech_id == tech_id and e.criterion_id == cid
-           and (e.conditions or "").strip()}
+def _cell(text) -> str:
+    return " ".join(str(text or "").replace("|", "/").split())
 
 
-def _ch2(state: MainState, names: dict) -> list[str]:
-    tcfg = technologies_config()["technologies"]
-    by_id = {t["tech_id"]: t for t in tcfg}
-    L = ["## 2. 대상 기술 개요", ""]
-    for tid in ("turboquant", "cxl_pnm"):
-        t = by_id.get(tid, {})
-        L += [f"### 2.{1 if tid == 'turboquant' else 2} {names.get(tid, tid)} — "
-             f"{'데이터 표현의 압축' if tid == 'turboquant' else '저장·계산 구조의 재구성'}", "",
-             f"분류: {t.get('group', '?')} / {t.get('category', '?')}", ""]
-    L += ["### 2.3 기술 구조 비교표", "",
-         "| 구분 | KV cache 접근 방식 | 해결 대상 병목 |", "|---|---|---|"]
-    for tid in ("turboquant", "cxl_pnm"):
-        t = by_id.get(tid, {})
-        L.append(f"| {names.get(tid, tid)} | {t.get('category', '?')} | (agents/domain.py DOM-1~3 근거 참고) |")
-    L += ["", "### 2.4 실험 근거 비교표 — 실험 조건이 다르면 '직접 비교 불가'", "",
-         "코드로 기계적 판정: 두 기술 모두 근거가 있고 조건(conditions) 문자열이 같으면 "
-         "'비교 가능', 근거는 있지만 조건이 다르면 '직접 비교 불가', 한쪽만 있으면 '정보 부족'.", "",
-         "| 항목 | TurboQuant 조건 | CXL-PNM 조건 | 판정 |", "|---|---|---|---|"]
-    for c in state["rubrics"]["criteria"]:
-        cid = c["id"]
-        a, b = _tech_conditions(state, "turboquant", cid), _tech_conditions(state, "cxl_pnm", cid)
-        if not a and not b:
-            continue
-        verdict = "정보 부족" if not a or not b else ("비교 가능" if a & b else "직접 비교 불가")
-        L.append(f"| {cid} | {'; '.join(a) or '(없음)'} | {'; '.join(b) or '(없음)'} | {verdict} |")
-    L.append("")
-    return L
+def _one_sentence(text: str, limit: int = 170) -> str:
+    text = _cell(text)
+    match = re.search(r".+?[.!?。](?:\s|$)", text)
+    sentence = match.group(0).strip() if match else text
+    if len(sentence) <= limit:
+        return sentence
+    return sentence[:limit - 1].rstrip() + "…"
 
 
-def _ch3(state: MainState) -> list[str]:
-    rub = state["rubrics"]
-    n = len(rub["criteria"])
-    return ["## 3. 평가 방법", "",
-           "### 3.1 도메인과 평가 주체", "", rub["meta"]["domain"], "",
-           "### 3.2 평가 시스템 구성", "",
-           "LangGraph 기반 Agentic RAG (그림 2, src/kv_eval/graph/main.py): 근거 수집 → 채점 → "
-           "균형 점검(재시도 최대 2라운드) → 규칙 처리 → 종합 → 보고서. "
-           "검색은 논문 하이브리드 검색(bge-m3 dense + BM25) + 웹 검색을 병행한다.", "",
-           f"### 3.3 4가지 평가 관점과 {n}개 평가 항목", "",
-           "| 관점 | 항목 |", "|---|---|"] + [
-        f"| {agent} | {', '.join(c['id'] for c in rub['criteria'] if c['agent'] == agent)} |"
-        for agent in ("trl", "market", "stakeholder", "domain")
-    ] + ["", "### 3.4 근거 등급·상한·하한·NA 규칙", "",
-        "| 등급 | 의미 | 점수 상한 |", "|---|---|---|"] + [
-        f"| {g} | {desc} | {cap} |" for g, desc, cap in
-        [("A", _GRADE_KO["A"], 5), ("B", _GRADE_KO["B"], 4), ("C", _GRADE_KO["C"], 3), ("D", _GRADE_KO["D"], 3)]
-    ] + ["", "관련 근거 0건일 때만 NA. 부정 근거가 C·D뿐이면 최저 2점 (rules/caps.py).", "",
-        "### 3.5 검색 규칙, 균형 점검, 가드레일", "",
-        "검색·재작성·재시도 한도는 설계서 D-10, 균형 점검 판정 조건은 rules/balance.py에 코드로 "
-        "고정되어 있다 (근거 공백·편향·조건 누락·채점 형식 오류 4종, LLM 판정 아님).", "",
-        "### 3.6 TRL 산출과 상충 분석 방법", "",
-        "TRL은 rules/trl_gate.py의 게이트 규칙(TRL-1~5 차원 점수 조합)으로 산출하고, 상충 "
-        "후보는 rules/conflicts.py가 같은 기술 안에서 P1~P6 비교 쌍의 점수 차가 2점 이상일 때만 "
-        "뽑는다 (자동 판정 아님 — 해석은 9장 종합에서 근거·조건을 대조해 채운다).", ""]
+def _evidence_refs(ids: list[str]) -> str:
+    return ", ".join(f"EVIDENCE:{evidence_id}" for evidence_id in ids) or "(정보 공백)"
 
 
-# ---------- 4~5. 기술별 평가 결과 ----------
+def _conditions(state: MainState, tech_id: str, criterion_id: str) -> str:
+    conditions = sorted({
+        _cell(evidence.conditions)
+        for evidence in state.get("evidence_pool", [])
+        if evidence.tech_id == tech_id and evidence.criterion_id == criterion_id and evidence.conditions
+    })
+    return "; ".join(conditions) or "(공개 조건 없음)"
 
-def _criterion_row(r) -> str:
-    return (f"| {r.criterion_id} | {r.score} | {r.raw_score} | {r.confidence} | {r.cap_applied or ''} | "
-           f"{', '.join(b.evidence_id for b in r.evidence)} |")
+
+def _summary(state: MainState, names: dict[str, str], assessment: dict) -> list[str]:
+    lines = ["## SUMMARY", "", f"핵심 질문: {state['rubrics']['meta']['core_question']}", ""]
+    trl_by_tech = {result.tech_id: result for result in state.get("trl_results", [])}
+    for tech_id in ("turboquant", "cxl_pnm"):
+        trl = trl_by_tech.get(tech_id)
+        prefix = f"TRL {trl.trl_level}, 확신도 {trl.trl_confidence}; " if trl else ""
+        summary = assessment.get(tech_id, {}).get("요약", "(종합 결과 없음)")
+        lines.append(f"- {names.get(tech_id, tech_id)}: {prefix}{summary}")
+    lines += ["", assessment.get("_overall", "(종합 결과 없음)"), ""]
+    return lines
 
 
-def _tech_chapter(state: MainState, tech_id: str, names: dict, assessment: dict, num: int) -> list[str]:
-    agent_titles = {"trl": "기술 성숙도", "market": "시장성 (MKT-1~4)",
-                    "stakeholder": "이해관계자 (STK-1~4)", "domain": "도메인 적용 (DOM-1~5)"}
-    results = [r for r in state.get("final_results", []) if r.tech_id == tech_id]
-    by_agent: dict[str, list] = {}
-    for r in results:
-        by_agent.setdefault(r.agent_type, []).append(r)
-    trl = next((tr for tr in state.get("trl_results", []) if tr.tech_id == tech_id), None)
+def _scope_and_method(state: MainState) -> list[str]:
+    domain = state.get("domain") or technologies_config()["domain"]
+    grades = ", ".join(f"{grade}={meaning}" for grade, meaning in _GRADE_KO.items())
+    return [
+        "## 1. 범위와 방법", "",
+        f"평가 범위: {domain['name']} / 주요 워크로드: {domain['workload']}.", "",
+        f"적용 시나리오: {' / '.join(domain['scenarios'])}.", "",
+        ("방법: 코드 기반 계획이 근거 수집과 관점별 채점을 분배하고, 근거 균형·조건·인용을 검사한 뒤 "
+         "규칙 기반 상한·TRL 게이트와 종합 단계를 적용했다."), "",
+        f"근거 등급: {grades}. 실험 조건이 다르면 직접 비교하지 않고 조건 차이로 남겼다.", "",
+    ]
 
-    L = [f"## {num}. {names[tech_id]} 평가 결과", "",
-        f"### {num}.1 {agent_titles['trl']} — 기법 TRL / 기반 부품 성숙도", ""]
+
+def _result_row(state: MainState, result) -> str:
+    score = result.score if result.raw_score in (None, result.score) else f"{result.score} (원 {result.raw_score})"
+    evidence = _evidence_refs([brief.evidence_id for brief in result.evidence])
+    condition = _conditions(state, result.tech_id, result.criterion_id)
+    rationale = _one_sentence(result.rationale)
+    return (f"| {result.criterion_id} | {_cell(score)} / {result.confidence} | {evidence} | "
+            f"{condition} | {rationale} |")
+
+
+def _tech_section(
+    state: MainState, tech_id: str, number: int, names: dict[str, str], assessment: dict
+) -> list[str]:
+    lines = [f"## {number}. {names.get(tech_id, tech_id)} 평가 결과", ""]
+    trl = next((item for item in state.get("trl_results", []) if item.tech_id == tech_id), None)
     if trl:
-        L += [f"TRL {trl.trl_level} (확신도 {trl.trl_confidence}, {trl.note}), "
-             f"기반 부품 성숙도(TRL-5) {trl.component_maturity}", "", "게이트 추적:"] + \
-            [f"- {t}" for t in trl.gate_trace] + [""]
-    for i, agent in enumerate(("market", "stakeholder", "domain"), start=2):
-        L += [f"### {num}.{i} {agent_titles[agent]}", "",
-             "| 항목 | 점수 | 원점수 | 확신도 | 상한 적용 | 근거 |", "|---|---|---|---|---|---|"]
-        for r in sorted(by_agent.get(agent, []), key=lambda r: r.criterion_id):
-            L.append(_criterion_row(r))
-        L.append("")
-    L += [f"### {num}.5 관점 간 상충 지점과 정보 공백 (P1~P6)", ""]
-    own = [c for c in state.get("conflicts", []) if c.tech_id == tech_id]
-    if own:
-        for c in own:
-            L.append(f"- {c.comparison_id} ({c.status}, 점수 차 {c.score_gap}): {c.interpretation}")
+        lines += [(f"TRL {trl.trl_level} (확신도 {trl.trl_confidence}, {trl.note}); "
+                   f"기반 부품 성숙도 {trl.component_maturity}."), ""]
+    lines += [
+        "| 항목 | 점수/확신도 | 근거 ID | 실험·적용 조건 | 핵심 판단 |",
+        "|---|---|---|---|---|",
+    ]
+    results = sorted(
+        (result for result in state.get("final_results", []) if result.tech_id == tech_id),
+        key=lambda result: result.criterion_id,
+    )
+    lines += [_result_row(state, result) for result in results]
+    if not results:
+        lines.append("| (결과 없음) | NA / low | (정보 공백) | (공개 조건 없음) | 공개 근거 부족 |")
+
+    lines += ["", "### 상충 지점", ""]
+    conflicts = [item for item in state.get("conflicts", []) if item.tech_id == tech_id]
+    if conflicts:
+        for conflict in conflicts:
+            refs = _evidence_refs(conflict.evidence_refs)
+            lines.append(f"- {conflict.comparison_id}: {conflict.interpretation or conflict.status}; {refs}")
     else:
-        L.append("(해당 없음 — 작게 돌린 실행이라 비교 쌍이 빠졌거나, 상충 후보가 없음)")
-    a = assessment.get(tech_id)
-    if a:
-        L += ["", f"**요약**: {a['요약']}", "", "**한계**:"] + [f"- {x}" for x in a["한계"]] + \
-            ["", "**시사점**:"] + [f"- {x}" for x in a["시사점"]]
-    L.append("")
-    return L
+        lines.append("- 확인된 상충 후보 없음")
+
+    tech_assessment = assessment.get(tech_id, {})
+    lines += ["", "### 한계 및 적용 시사점", ""]
+    for limitation in tech_assessment.get("한계", []):
+        lines.append(f"- 한계: {_one_sentence(limitation)}")
+    for implication in tech_assessment.get("시사점", []):
+        lines.append(f"- 시사점: {_one_sentence(implication)}")
+    if not tech_assessment.get("한계"):
+        lines.append("- 한계: 공개 자료 범위 안에서만 판단한 자동 평가 초안")
+    if not tech_assessment.get("시사점"):
+        lines.append("- 시사점: 실제 적용 전 동일 조건의 재현 검증 필요")
+    lines.append("")
+    return lines
 
 
-# ---------- 6. 관점별 근거 대조 / 7. 조건부 적용 시사점 / 8. 한계 / 9. 종합 ----------
-
-def _ch6(assessment: dict) -> list[str]:
+def _comparison(state: MainState, assessment: dict) -> list[str]:
     cross = assessment.get("_cross", {})
-    return ["## 6. 관점별 근거 대조", "",
-           "### 6.1 같은 관점에서 두 기술의 근거 유형·검증 수준은 어떻게 다른가", "",
-           cross.get("근거_대조", "(생성 안 됨)"), "",
-           "### 6.2 SW 접근과 HW 접근의 트레이드오프", "", cross.get("트레이드오프", "(생성 안 됨)"), "",
-           "### 6.3 상호 보완 가능성 (검증되지 않은 가설)", "", cross.get("상호보완_가능성", "(생성 안 됨)"), ""]
+    lines = [
+        "## 4. 비교와 트레이드오프", "",
+        "### 근거 수준 대조", "", cross.get("근거_대조", "(생성 안 됨)"), "",
+        "### SW·HW 접근 트레이드오프", "", cross.get("트레이드오프", "(생성 안 됨)"), "",
+        "### 상호 보완 가능성", "", cross.get("상호보완_가능성", "(생성 안 됨)"), "",
+        "| 기술 | 상충 후보 | 해석 | 근거 ID |", "|---|---|---|---|",
+    ]
+    names = _names(state)
+    for conflict in state.get("conflicts", []):
+        lines.append(f"| {names.get(conflict.tech_id, conflict.tech_id)} | {conflict.comparison_id} | "
+                     f"{_cell(conflict.interpretation or conflict.status)} | "
+                     f"{_evidence_refs(conflict.evidence_refs)} |")
+    if not state.get("conflicts"):
+        lines.append("| - | 확인된 후보 없음 | 판단 유보 | (정보 공백) |")
+    lines.append("")
+    return lines
 
 
-def _ch7(assessment: dict) -> list[str]:
-    sc = assessment.get("_scenario", {})
-    return ["## 7. 조건부 적용 시사점", "",
-           "### 7.1 시나리오 ① 기존 GPU 서버 유지 환경", "", sc.get("시나리오1", "(생성 안 됨)"), "",
-           "### 7.2 시나리오 ② 서버 구조 변경 가능 환경", "", sc.get("시나리오2", "(생성 안 됨)"), "",
-           "### 7.3 이해관계자별 요구·이익·부담과 충돌 지점", "", sc.get("이해관계자_충돌", "(생성 안 됨)"), "",
-           "### 7.4 도입 촉진 요인과 장벽", "", sc.get("도입_요인_장벽", "(생성 안 됨)"), ""]
+def _scenarios(assessment: dict) -> list[str]:
+    scenario = assessment.get("_scenario", {})
+    return [
+        "## 5. 시나리오와 이해관계자", "",
+        "### 기존 GPU 서버 유지", "", scenario.get("시나리오1", "(생성 안 됨)"), "",
+        "### 서버 구조 변경 가능", "", scenario.get("시나리오2", "(생성 안 됨)"), "",
+        "### 이해관계자 충돌", "", scenario.get("이해관계자_충돌", "(생성 안 됨)"), "",
+        "### 도입 요인과 장벽", "", scenario.get("도입_요인_장벽", "(생성 안 됨)"), "",
+    ]
 
 
-def _ch8(state: MainState, assessment: dict) -> list[str]:
-    limits = [x for tid in ("turboquant", "cxl_pnm") for x in assessment.get(tid, {}).get("한계", [])]
+def _limits_and_gaps(state: MainState, assessment: dict) -> list[str]:
+    lines = ["## 6. 한계와 정보 공백", "", "### 정보 공백", ""]
     gaps = state.get("info_gaps", [])
-    L = ["## 8. 한계와 추가 검증 과제", "",
-        "### 8.1 근거의 한계", ""] + [f"- {x}" for x in limits] + \
-        ["", "### 8.2 정보 공백(NA) 항목과 해석 주의사항", "",
-        f"{len(gaps)}건이 재시도 한도(2라운드) 소진 후에도 정보 공백으로 남았다. "
-        "NA는 기술의 실패가 아니라 공개 근거로 확인되지 않았다는 뜻이다.", ""]
-    for g in gaps:
-        L.append(f"- {g.tech_id} {g.criterion_id}: {g.reason}")
-    L += ["", "### 8.3 평가 시스템의 한계", "",
-         "검색 범위는 코퍼스 매니페스트(최대 200쪽)와 웹 검색 max_results=5로 제한된다. "
-         "임베딩 검색 성능은 eval/retrieval/model_selection.md의 Hit@K 실험 결과를 따른다. "
-         "채점은 LLM 자동 채점이며 사람 검토 전 초안이다.", "",
-         "### 8.4 추가 검증 과제", "",
-         "- deliverables/RAG-Design_*.pdf D-12 사람 검토 체크리스트 수행 (부록 D)",
-         "- 정보 공백(NA) 항목 원문 재확인",
-         "- eval/retrieval 재현성 확인 후 임베딩 모델 재확정 여부 검토", ""]
-    return L
-
-
-def _ch9(assessment: dict) -> list[str]:
-    return ["## 9. 종합", "", assessment.get("_overall", "(생성 안 됨)"), ""]
-
-
-# ---------- 부록 / REFERENCE ----------
-
-def _appendix(state: MainState) -> list[str]:
-    L = ["## 부록", "", "### A. 항목별 채점 결과 상세", ""]
-    for r in sorted(state.get("final_results", []), key=lambda r: (r.tech_id, r.criterion_id)):
-        L += [f"**{r.tech_id} {r.criterion_id}** — 점수 {r.score} (원점수 {r.raw_score}, "
-             f"확신도 {r.confidence}, cap_applied={r.cap_applied}, intra_conflict={r.intra_conflict})", "",
-             r.rationale, ""]
-        for b in r.evidence:
-            L.append(f"  - [{b.grade}/{b.stance}] {b.evidence_id}: {b.claim} ({b.source}, {b.date})")
-        L.append("")
-    L += ["### B. 검색 로그와 재시도 이력", "",
-         "| round | 기술 | 항목 | 결과 수 | 재작성 | 검색일 |", "|---|---|---|---|---|---|"]
-    for s in state.get("search_log", []):
-        L.append(f"| {s.get('round')} | {s.get('tech_id')} | {s.get('criterion_id')} | "
-                f"{s.get('results')} | {s.get('rewritten')} | {s.get('searched_at')} |")
-    L += ["", "### C. 평가 루브릭 전문", "", "`configs/rubrics.json` 참고 (이 보고서에는 요약만 포함).", "",
-         "### D. 사람 검토 체크리스트와 검토 결과", "",
-         "- [ ] 주요 수치가 실제 원문에 존재하는가", "- [ ] 출처의 발행 주체와 날짜가 맞는가",
-         "- [ ] 실측·시뮬레이션·주장을 올바르게 구분했는가",
-         "- [ ] TurboQuant와 CXL-PNM에 같은 검색 규칙을 적용했는가",
-         "- [ ] 논문에 보고된 결과를 팀이 재현한 결과처럼 서술하지 않았는가",
-         "- [ ] NA를 기술의 실패로 해석하지 않았는가",
-         "- [ ] 두 기술의 점수를 합산하거나 순위화하지 않았는가",
-         "- [ ] info_gaps에 기록된 항목의 처리가 타당한가", "", "(검토 결과는 검토 후 체크박스에 표시)", ""]
-    return L
+    if gaps:
+        lines += [f"- {gap.tech_id} {gap.criterion_id}: {_one_sentence(gap.reason)}" for gap in gaps]
+    else:
+        lines.append("- 재시도 한도 뒤 별도로 남은 정보 공백 없음")
+    lines += ["", "### 평가 한계", ""]
+    limitations = [item for tech_id in ("turboquant", "cxl_pnm")
+                   for item in assessment.get(tech_id, {}).get("한계", [])]
+    lines += [f"- {_one_sentence(item)}" for item in dict.fromkeys(limitations)]
+    lines += [
+        "- 공개 코퍼스와 웹 검색 범위에 한정된 자동 평가이며 사람의 원문 검토 전 초안이다.",
+        "- 서로 다른 모델·문맥 길이·배치·하드웨어 조건의 결과는 직접 우열로 해석하지 않는다.",
+        "", "### 적용 시사점", "",
+    ]
+    implications = [item for tech_id in ("turboquant", "cxl_pnm")
+                    for item in assessment.get(tech_id, {}).get("시사점", [])]
+    lines += [f"- {_one_sentence(item)}" for item in dict.fromkeys(implications)]
+    lines.append("")
+    return lines
 
 
 def _reference(state: MainState) -> list[str]:
-    cited = {b.evidence_id for r in state.get("final_results", []) for b in r.evidence}
-    refs = [e for e in state.get("evidence_pool", []) if e.evidence_id in cited]
-    L = ["## REFERENCE", "", "> 보고서 본문에서 실제로 인용한 자료만 수록. 검색했지만 인용하지 않은 "
-        "자료는 부록 B 검색 로그에만 남긴다.", ""]
-    for e in refs:
-        L.append(f"- [{e.evidence_grade}] {e.source_title} — {e.publisher}, {e.published_at or 'n.d.'}, "
-                f"{e.source_url or e.locator.doc_id} (확인일 {e.accessed_at})")
-    return L
+    cited = {brief.evidence_id for result in state.get("final_results", []) for brief in result.evidence}
+    cited.update(ref for conflict in state.get("conflicts", []) for ref in conflict.evidence_refs)
+    evidence_by_id = {evidence.evidence_id: evidence for evidence in state.get("evidence_pool", [])}
+    lines = ["## REFERENCE", "", "> 본문에서 실제 인용한 출처만 수록한다.", ""]
+    groups: dict[tuple, list] = {}
+    missing = []
+    for evidence_id in sorted(cited):
+        evidence = evidence_by_id.get(evidence_id)
+        if not evidence:
+            missing.append(evidence_id)
+            continue
+        locator = evidence.source_url or evidence.locator.doc_id or "위치 정보 없음"
+        key = (evidence.source_title, evidence.publisher, evidence.published_at, locator)
+        groups.setdefault(key, []).append(evidence)
+
+    for evidence_id in missing:
+        lines.append(f"- EVIDENCE:{evidence_id} — 확인되지 않은 인용")
+    for (title, publisher, published_at, locator), evidence_items in groups.items():
+        shown = evidence_items[:3]
+        ids = ", ".join(f"EVIDENCE:{item.evidence_id}" for item in shown)
+        extra = " 및 나머지 인용(결과 표 참조)" if len(evidence_items) > len(shown) else ""
+        grades = "/".join(dict.fromkeys(item.evidence_grade for item in evidence_items))
+        lines.append(
+            f"- {ids}{extra} [{grades}] {title} — {publisher}, {published_at or 'n.d.'}, {locator} "
+            f"(확인일 {shown[0].accessed_at})"
+        )
+    if not cited:
+        lines.append("- 실제 인용된 출처 없음 — 정보 공백으로 처리")
+    return lines
 
 
-def synthesize_report(state: MainState) -> dict:
-    progress.step("synthesize_report", "종합 결과 정리 시작")
-    upd = synthesize(state)
+def build_report(state: MainState) -> str:
+    names = _names(state)
+    assessment = state.get("final_assessment", {})
+    lines = [f"# {state['rubrics']['meta']['title']} — TurboQuant · CXL-PNM", ""]
+    lines += _summary(state, names, assessment)
+    lines += _scope_and_method(state)
+    lines += _tech_section(state, "turboquant", 2, names, assessment)
+    lines += _tech_section(state, "cxl_pnm", 3, names, assessment)
+    lines += _comparison(state, assessment)
+    lines += _scenarios(assessment)
+    lines += _limits_and_gaps(state, assessment)
+    lines += _reference(state)
+    return "\n".join(lines).strip() + "\n"
+
+
+def synthesize_draft(state: MainState) -> dict:
+    """종합 결과와 보고서 문자열만 만들며 파일은 저장하지 않는다."""
+    progress.step("synthesize_draft", "종합 결과와 보고서 초안 생성")
+    synthesis_update = synthesize(state)
+    rendering_state = {**state, **synthesis_update}
+    return {
+        **synthesis_update,
+        "report_draft": build_report(rendering_state),
+        "report_retry_round": 0,
+        "report_page_count": 0,
+    }
+
+
+def persist_report(state: MainState) -> dict:
+    """10페이지 제한을 통과한 preview와 JSON 상세 결과만 최종 저장한다."""
+    quality = state.get("report_quality")
+    if (not quality or not quality.passed or not quality.page_count
+            or quality.page_count > MAX_REPORT_PAGES):
+        raise ValueError("품질 및 10페이지 제한을 통과한 보고서만 저장할 수 있음")
+
     run_dir = output_root() / state.get("run_id", "run")
     run_dir.mkdir(parents=True, exist_ok=True)
+    md_path = run_dir / "report.md"
+    temp_md = run_dir / ".report.md.tmp"
+    temp_md.write_text(state["report_draft"], encoding="utf-8")
+    persist_preview(state, run_dir / "report.pdf")
+    temp_md.replace(md_path)
     _dump(run_dir / "evidence.json", state.get("evidence_pool", []))
     _dump(run_dir / "scores.json", state.get("final_results", []))
     _dump(run_dir / "search_log.json", state.get("search_log", []))
     _dump(run_dir / "info_gaps.json", state.get("info_gaps", []))
-    progress.step("synthesize_report", "보고서 본문 조립 중")
+    progress.step("persist_report", f"최종 보고서 저장 완료: {md_path}")
+    return {"report_path": str(md_path)}
 
-    names = _names(state)
-    assessment = upd["final_assessment"]
-    state_for_render = {**state, "conflicts": upd["conflicts"]}
 
-    L = [f"# {state['rubrics']['meta']['title']} — TurboQuant · CXL-PNM", ""]
-    L += _summary(state_for_render, names, assessment)
-    L += _ch1(state)
-    L += _ch2(state, names)
-    L += _ch3(state)
-    L += _tech_chapter(state_for_render, "turboquant", names, assessment, 4)
-    L += _tech_chapter(state_for_render, "cxl_pnm", names, assessment, 5)
-    L += _ch6(assessment)
-    L += _ch7(assessment)
-    L += _ch8(state, assessment)
-    L += _ch9(assessment)
-    L += _appendix(state)
-    L += _reference(state)
+def _report_updates(state: MainState) -> dict:
+    keys = (
+        "conflicts", "final_assessment", "report_draft", "report_quality",
+        "report_retry_round", "report_page_count", "report_path",
+    )
+    return {key: state[key] for key in keys if key in state}
 
-    text = "\n".join(L) + "\n"
-    path = run_dir / "report.md"
-    path.write_text(text, encoding="utf-8")
-    progress.step("synthesize_report", f"report.md 생성 완료 ({path})")
 
-    try:
-        font = render_pdf(text, run_dir / "report.pdf")
-        if font:
-            progress.step("synthesize_report", f"report.pdf 생성 완료 (폰트: {font})")
-        else:
-            progress.step("synthesize_report", "한글 폰트를 찾지 못해 report.pdf를 건너뜀 (report.md만 생성). "
-                          "KV_REPORT_FONT=<ttf 경로>로 폰트를 지정해 보세요.")
-    except Exception as e:  # noqa: BLE001 — PDF 실패로 그래프 전체를 죽이지 않는다
-        progress.step("synthesize_report", f"report.pdf 생성 실패, report.md만 유지: {type(e).__name__}: {e}")
+def finalize_report(state: MainState) -> dict:
+    """품질·페이지 제한을 통과할 때만 최종 파일을 확정한다."""
+    current = dict(state)
+    current.update(evaluate_report(current))
+    if not current["report_quality"].passed:
+        return _report_updates(current)
 
-    return {**upd, "report_path": str(path)}
+    while True:
+        current.update(render_preview(current))
+        quality = current["report_quality"]
+        if quality.passed:
+            current.update(persist_report(current))
+            return _report_updates(current)
+        if quality.retry_kind != "compress":
+            return _report_updates(current)
+        if current.get("report_retry_round", 0) >= MAX_COMPRESSION_ROUNDS:
+            current.update(compress_report(current))
+            return _report_updates(current)
+        current.update(compress_report(current))
+        current.update(evaluate_report(current))
+        if not current["report_quality"].passed:
+            return _report_updates(current)
+
+
+def synthesize_report(state: MainState) -> dict:
+    """기존 그래프 노드 호환용: 분리된 보고서 단계를 순차 실행한다."""
+    draft_update = synthesize_draft(state)
+    final_update = finalize_report({**state, **draft_update})
+    return {**draft_update, **final_update}

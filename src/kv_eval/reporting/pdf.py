@@ -11,8 +11,8 @@ report.py가 만드는 Markdown은 우리가 직접 정한 부분집합이다(�
 순서대로 시도해 처음 등록되는 것을 쓴다. reportlab TTFont는 glyf(트루타입) 외곽선만
 읽을 수 있어 Noto Sans CJK 같은 CFF(OpenType) 폰트는 등록에 실패한다 — 그래서 여러
 후보를 순서대로 "실제로 등록해보고" 되는 것을 고른다. KV_REPORT_FONT 환경 변수로 경로를
-직접 지정할 수 있다. 전부 실패하면 render_pdf가 None을 반환하고, 호출하는 쪽(report.py)이
-report.pdf 없이 report.md만으로 계속 진행한다.
+직접 지정할 수 있다. 전부 실패하면 저수준 render_pdf는 None을 반환하고, render_preview는
+이를 명시적인 보고서 품질 실패로 바꾼다. 검증되지 않은 report.pdf는 최종 파일명으로 저장하지 않는다.
 
 macOS 후보(AppleGothic·AppleSDGothicNeo)는 이 프로젝트를 만든 클라우드·Linux 환경에서는
 실제로 시험해 볼 수 없었다 — 맥에서 `uv run python app.py` 실행 후 report.pdf를 열어
@@ -31,7 +31,21 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (
+    CondPageBreak,
+    ListFlowable,
+    ListItem,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+
+from ..config import output_root
+from ..graph.state import MainState
+from ..graph.task_schema import ReportQualityResult
+from ..rules.report_quality import MAX_REPORT_PAGES, TARGET_REPORT_PAGES
 
 _FONT_NAME = "KVReportKR"
 
@@ -63,7 +77,7 @@ def _register_font() -> str | None:
             try:
                 pdfmetrics.registerFont(TTFont(_FONT_NAME, path, subfontIndex=idx))
                 return _FONT_NAME
-            except Exception:
+            except Exception:  # noqa: BLE001, S112 - 후보 폰트/서브폰트를 순서대로 실제 등록해 본다
                 continue
     return None
 
@@ -151,6 +165,9 @@ def _table_widths(column_count: int, total_width: float) -> list[float]:
         last = 64.0
         middle = (total_width - first - last) / 2
         return [first, middle, middle, last]
+    if column_count == 5:
+        fixed = [45.0, 58.0, 105.0, 112.0]
+        return [*fixed, total_width - sum(fixed)]
     return [total_width / column_count] * column_count
 
 
@@ -166,6 +183,8 @@ def _build_story(md_text: str, styles: dict, table_width: float) -> list:
         m = _HEADING_RE.match(line)
         if m:
             level, text = len(m.group(1)), m.group(2)
+            if level <= 3:
+                story.append(CondPageBreak(28 * mm))
             story.append(Spacer(1, 10 if level <= 2 else 6))
             story.append(Paragraph(_inline(text), styles[f"h{min(level, 4)}"]))
             i += 1
@@ -186,7 +205,7 @@ def _build_story(md_text: str, styles: dict, table_width: float) -> list:
                 )
                 tbl.setStyle(TableStyle([
                     ("FONTNAME", (0, 0), (-1, -1), styles["font"]),
-                    ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e8e8")),
                     ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -197,11 +216,10 @@ def _build_story(md_text: str, styles: dict, table_width: float) -> list:
                 story.append(Spacer(1, 8))
             continue
         if _BULLET_RE.match(line):
-            items = []
             while i < n and _BULLET_RE.match(lines[i]):
-                items.append(ListItem(Paragraph(_inline(_BULLET_RE.match(lines[i]).group(1)), styles["body"])))
+                item = ListItem(Paragraph(_inline(_BULLET_RE.match(lines[i]).group(1)), styles["body"]))
+                story.append(ListFlowable([item], bulletType="bullet", leftIndent=14))
                 i += 1
-            story.append(ListFlowable(items, bulletType="bullet", leftIndent=14))
             story.append(Spacer(1, 4))
             continue
         if _QUOTE_RE.match(line):
@@ -224,18 +242,26 @@ def _build_story(md_text: str, styles: dict, table_width: float) -> list:
 
 
 def _styles(font: str) -> dict:
-    base = dict(fontName=font, wordWrap="CJK")
+    base = {"fontName": font, "wordWrap": "CJK"}
     return {
         "font": font,
-        "h1": ParagraphStyle("h1", fontSize=17, leading=22, spaceAfter=6, **base),
-        "h2": ParagraphStyle("h2", fontSize=14, leading=19, spaceAfter=5, **base),
-        "h3": ParagraphStyle("h3", fontSize=12, leading=16, spaceAfter=4, **base),
-        "h4": ParagraphStyle("h4", fontSize=10.5, leading=14, spaceAfter=3, **base),
+        "h1": ParagraphStyle("h1", fontSize=17, leading=22, spaceAfter=6, keepWithNext=1, **base),
+        "h2": ParagraphStyle("h2", fontSize=14, leading=19, spaceAfter=5, keepWithNext=1, **base),
+        "h3": ParagraphStyle("h3", fontSize=12, leading=16, spaceAfter=4, keepWithNext=1, **base),
+        "h4": ParagraphStyle("h4", fontSize=10.5, leading=14, spaceAfter=3, keepWithNext=1, **base),
         "body": ParagraphStyle("body", fontSize=9.5, leading=14, **base),
-        "cell": ParagraphStyle("cell", fontSize=8.5, leading=11, splitLongWords=1, **base),
+        "cell": ParagraphStyle("cell", fontSize=9, leading=11.5, splitLongWords=1, **base),
         "quote": ParagraphStyle("quote", fontSize=9, leading=13, leftIndent=12,
                                 textColor=colors.HexColor("#555555"), **base),
     }
+
+
+def _page_footer(canvas, doc) -> None:
+    canvas.saveState()
+    canvas.setFont(doc._kv_font, 9)
+    canvas.setFillColor(colors.HexColor("#666666"))
+    canvas.drawCentredString(A4[0] / 2, 9 * mm, f"{doc.page}")
+    canvas.restoreState()
 
 
 def render_pdf(md_text: str, out_path: Path) -> str | None:
@@ -248,5 +274,77 @@ def render_pdf(md_text: str, out_path: Path) -> str | None:
     doc = SimpleDocTemplate(str(out_path), pagesize=A4,
                             topMargin=18 * mm, bottomMargin=18 * mm,
                             leftMargin=16 * mm, rightMargin=16 * mm)
-    doc.build(_build_story(md_text, styles, doc.width))
+    doc._kv_font = font
+    doc.build(_build_story(md_text, styles, doc.width),
+              onFirstPage=_page_footer, onLaterPages=_page_footer)
     return font
+
+
+def preview_path(state: MainState) -> Path:
+    round_ = state.get("report_retry_round", 0)
+    return output_root() / state.get("run_id", "run") / f".report-preview-r{round_}.pdf"
+
+
+def count_pages(path: Path) -> int:
+    """렌더링된 PDF의 실제 페이지 수를 pypdf로 센다."""
+    from pypdf import PdfReader
+
+    return len(PdfReader(str(path)).pages)
+
+
+def render_preview(state: MainState) -> dict:
+    """최종 파일명과 분리된 PDF를 렌더링하고 실제 페이지 수를 반환한다."""
+    path = preview_path(state)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base_quality = state.get("report_quality")
+    base_issues = list(base_quality.issues if base_quality else [])
+    try:
+        font = render_pdf(state["report_draft"], path)
+        if not font:
+            raise RuntimeError("한글 임베딩 폰트를 찾지 못함")
+        page_count = count_pages(path)
+    except Exception as error:  # noqa: BLE001 - 렌더링 실패는 품질 실패로 명시한다
+        return {
+            "report_page_count": 0,
+            "report_quality": ReportQualityResult(
+                passed=False,
+                issues=[*base_issues, f"PDF 미리보기 렌더링 실패: {type(error).__name__}: {error}"],
+                retry_kind=None,
+            ),
+        }
+
+    issues = list(base_issues)
+    retry_kind = base_quality.retry_kind if base_quality and not base_quality.passed else None
+    passed = bool(base_quality.passed if base_quality else True)
+    if page_count > MAX_REPORT_PAGES:
+        issues.append(f"PDF가 {page_count}페이지로 제한 {MAX_REPORT_PAGES}페이지를 초과함")
+        passed = False
+        retry_kind = "compress"
+    elif page_count < TARGET_REPORT_PAGES[0]:
+        # 8~10페이지는 권장 범위이며, 8페이지 미만은 실패 조건이 아니다.
+        retry_kind = None if passed else retry_kind
+
+    return {
+        "report_page_count": page_count,
+        "report_quality": ReportQualityResult(
+            passed=passed,
+            page_count=page_count,
+            issues=issues,
+            retry_kind=retry_kind,
+        ),
+    }
+
+
+def persist_preview(state: MainState, final_path: Path) -> None:
+    """검증된 preview만 최종 report.pdf 이름으로 승격한다."""
+    quality = state.get("report_quality")
+    if not quality or not quality.passed or not quality.page_count:
+        raise ValueError("품질 검사를 통과한 PDF preview가 필요함")
+    if quality.page_count > MAX_REPORT_PAGES:
+        raise ValueError(f"최종 PDF는 {MAX_REPORT_PAGES}페이지를 초과할 수 없음")
+    source = preview_path(state)
+    if not source.exists():
+        raise FileNotFoundError(source)
+    source.replace(final_path)
+    for stale_preview in final_path.parent.glob(".report-preview-r*.pdf"):
+        stale_preview.unlink()

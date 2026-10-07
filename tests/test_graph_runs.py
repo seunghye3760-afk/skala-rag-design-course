@@ -10,3 +10,8 @@ def test_graph_runs(tmp_path, monkeypatch):
     assert len(final["final_results"]) == 6
     heads = [l for l in Path(final["report_path"]).read_text(encoding="utf-8").splitlines() if l.startswith("## ")]
     assert heads[0] == "## SUMMARY" and heads[-1] == "## REFERENCE"
+    assert final["report_quality"].passed is True
+    assert 0 < final["report_page_count"] <= 10
+    assert Path(final["report_path"]).with_suffix(".pdf").exists()
+    assert (Path(final["report_path"]).parent / "scores.json").exists()
+    assert list(Path(final["report_path"]).parent.glob(".report-preview-r*.pdf")) == []

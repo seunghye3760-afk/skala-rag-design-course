@@ -77,11 +77,19 @@ def _fake(state: MainState) -> dict:
     return {"conflicts": conflicts, "final_assessment": assessment}
 
 
-def _criterion_line(rub: dict, r) -> str:
+def _criterion_line(rub: dict, r, evidence_by_id: dict) -> str:
     name = next((c["name"] for c in rub["criteria"] if c["id"] == r.criterion_id), r.criterion_id)
     cap = f" (상한 적용: {r.cap_applied})" if r.cap_applied else ""
+    evidence = []
+    for brief in r.evidence:
+        source = evidence_by_id.get(brief.evidence_id)
+        conditions = source.conditions if source and source.conditions else "조건 미상"
+        evidence.append(
+            f"{brief.evidence_id}[{brief.grade}/{brief.stance}]: {brief.claim} / 조건={conditions}"
+        )
     return (f"- {r.criterion_id} {name}: {r.score}점 (원점수 {r.raw_score}, 확신도 {r.confidence}){cap}\n"
-           f"  rationale: {r.rationale}")
+            f"  rationale: {r.rationale}\n"
+            f"  evidence: {'; '.join(evidence) or '정보 공백'}")
 
 
 def _tech_block(state: MainState, tech_id: str) -> str:
@@ -93,7 +101,9 @@ def _tech_block(state: MainState, tech_id: str) -> str:
         lines.append(f"TRL {trl.trl_level} (확신도 {trl.trl_confidence}, 기반 부품 성숙도 "
                      f"{trl.component_maturity})\n게이트: {' / '.join(trl.gate_trace)}")
     results = [r for r in state.get("final_results", []) if r.tech_id == tech_id]
-    lines += [_criterion_line(rub, r) for r in sorted(results, key=lambda r: r.criterion_id)]
+    evidence_by_id = {e.evidence_id: e for e in state.get("evidence_pool", [])}
+    lines += [_criterion_line(rub, r, evidence_by_id)
+              for r in sorted(results, key=lambda r: r.criterion_id)]
     return "\n".join(lines)
 
 
