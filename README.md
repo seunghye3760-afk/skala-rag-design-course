@@ -243,12 +243,9 @@ uv run python app_agent.py                          # 전체 18항목
 
 ## Contributors
 
-네 명이 각자 Orchestrator-Workers 대안을 별도 브랜치로 구현해 비교 검토한 뒤, `submit/agent-orchestrator` 구조를 제출본으로 채택했습니다.
-아래 "이번 Agent 과제" 열의 괄호는 그 설계·구현이 들어 있는 브랜치입니다.
-
 | 이름 | 이전 RAG 실습 | 이번 Agent 과제 |
 |---|---|---|
-| 안서현 | Embedding 모델 선정, 설계서 작성, 코드 점검 및 통합 | Worker 신뢰성 설계 — 수집 worker 오류 격리·부분 성공 처리, 재채점 실패 시 점수 보호, 보고서 쪽수 실측 검증 (별도 브랜치 `feature/orchestrator-workers`에 구현). Embedding 평가(Hit@K·MRR), LangSmith 트레이스 캡처 |
-| 이민기 | RAG 적용 대상 설계, AI 루브릭 설계, 근거 수집 및 기술 평가 설계 | Orchestrator 조정 계층 통합 — 그래프 조립, LLM 플래너·동적 fan-out·fallback, 보고서 품질 평가 노드·Loop, State Schema, 보고서 구성·10쪽 압축, 전체 실행 검증 (제출 브랜치 `submit/agent-orchestrator`) |
-| 박재흥 | RAG 적용 대상 설계, 시장성 및 이해관계자 평가 설계, 설계서 현행화 점검 | 품질 판정·재개 설계 — LLM Judge 인용 원문 대조, 체크포인트 재개(`--resume`), 실행 스텝 상한, 플래너 코드 가드 (별도 브랜치 `agent/orchestrator-workers`에 구현) |
-| 김승혜 | 기술 선정 방식 설계, 관점별 웹 가드레일 설계, 문서·임베딩·검색 및 그래프 통합 | State Schema·체크포인트 설계 — Layered State 레이어 정의, WorkItem 구조화 스키마, 체크포인트 직렬화, 보고서 초안→평가→확정 흐름 (별도 브랜치 `feat/multi-agent-orchestration-KSH`에 구현) |
+| 안서현 | Embedding 모델 선정, 설계서 작성, 코드 점검 및 통합 | Worker 실패 처리·fallback 정책 설계 검토, 보고서 10쪽 제한 검증 방식 설계, Embedding 평가(Hit@K·MRR), LangSmith 트레이스 캡처 |
+| 이민기 | RAG 적용 대상 설계, AI 루브릭 설계, 근거 수집 및 기술 평가 설계 | Orchestrator 조정 계층 구현 — 그래프 조립, LLM 플래너·동적 fan-out, 보고서 품질 평가 노드·Loop, State Schema, 보고서 구성·압축, 전체 실행 검증 |
+| 박재흥 | RAG 적용 대상 설계, 시장성 및 이해관계자 평가 설계, 설계서 현행화 점검 | 보고서 품질 평가 기준 설계 검토 — Judge 판정 기준·재개(체크포인트) 설계, 플래너 가드 조건 정의, 실행 결과 검수 |
+| 김승혜 | 기술 선정 방식 설계, 관점별 웹 가드레일 설계, 문서·임베딩·검색 및 그래프 통합 | State Schema 설계 검토 — Layered State 레이어 구분·구조화 서브태스크 스키마 정의, 체크포인트 설계, 설계 문서·README State 7항목 검토 |
