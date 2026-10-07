@@ -305,7 +305,7 @@ def _enforce_page_limit(state: OrchestratorState, path: Path, text: str, pages: 
     ref_idx = rest.find("\n## REFERENCE")
     appendix, reference = ("## 부록" + rest[:ref_idx], rest[ref_idx:]) if ref_idx >= 0 else ("## 부록" + rest, "")
     (path.parent / "appendix.md").write_text(appendix + "\n", encoding="utf-8")
-    slim = head + "\n## 부록\n\n부록(항목별 채점 상세·검색 로그·체크리스트)은 같은 폴더의 appendix.md 참고.\n" + reference
+    slim = head + "\n## 부록\n\n부록(A 항목별 채점 상세 · B 검색 로그 · C 실험 조건 비교 판정 전문 · D 루브릭 · E 사람 검토 체크리스트)은 같은 폴더의 appendix.md 참고.\n" + reference
     path.write_text(slim, encoding="utf-8")
     try:
         report_mod.render_pdf(slim, path.with_suffix(".pdf"))
@@ -323,34 +323,48 @@ def _enforce_page_limit(state: OrchestratorState, path: Path, text: str, pages: 
             progress.step("finalize", f"PDF 재생성 실패: {type(e).__name__}: {e}")
         before, new_pages = new_pages, _pdf_pages(path.with_suffix(".pdf"))
         decision(state.get("run_id", "run"), "finalize", "compact_body",
-                 f"본문 {before}쪽 > {limit}쪽 → REFERENCE 압축 표기·2.4 이유 열 제거 → {new_pages}쪽")
+                 f"본문 {before}쪽 > {limit}쪽 → REFERENCE 압축 표기 → {new_pages}쪽")
+    if new_pages is not None and new_pages > limit:                    # 3단계: 핵심 수치 표를 3행으로
+        slim = _trim_key_numbers(slim, keep=3)
+        path.write_text(slim, encoding="utf-8")
+        try:
+            report_mod.render_pdf(slim, path.with_suffix(".pdf"))
+        except Exception as e:  # noqa: BLE001
+            progress.step("finalize", f"PDF 재생성 실패: {type(e).__name__}: {e}")
+        before, new_pages = new_pages, _pdf_pages(path.with_suffix(".pdf"))
+        decision(state.get("run_id", "run"), "finalize", "trim_key_numbers",
+                 f"본문 {before}쪽 > {limit}쪽 → 4·5장 핵심 수치 표를 3행으로 → {new_pages}쪽")
     return new_pages
 
 
+def _trim_key_numbers(text: str, keep: int = 3) -> str:
+    """'수치가 포함된 주장' 표(4.5/5.5)의 데이터 행을 keep개만 남긴다. 전체는 appendix.md·evidence.json에."""
+    out, in_tbl, kept = [], False, 0
+    for line in text.splitlines():
+        if line.startswith("| 항목 | 등급/방향 | 수치가 포함된 주장 |"):
+            in_tbl, kept = True, 0
+            out.append(line)
+            continue
+        if in_tbl:
+            if line.startswith("|---"):
+                out.append(line)
+                continue
+            if line.startswith("| "):
+                kept += 1
+                if kept <= keep:
+                    out.append(line)
+                continue
+            in_tbl = False
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
 def _compact_body(state: OrchestratorState, text: str) -> str:
-    """2단계 압축: REFERENCE를 간략 표기로 다시 쓰고, 2.4 표의 '이유' 열을 뺀다 (판정은 유지)."""
+    """2단계 압축: REFERENCE를 간략 표기(제목 48자·URL 56자·확인일 생략)로 다시 쓴다."""
     head, _, _ = text.partition("\n## REFERENCE")
-    head = head.replace("종합 단계(LLM)가 항목별로 두 기술 근거의 실험 조건(모델 크기·문맥 길이·하드웨어·정밀도)을 대조해 "
-                        "'비교 가능 / 조건 차이 / 정보 부족' 중 하나로 판정하고 이유를 적는다. 조건 열은 근거 등급이 가장 높은 "
-                        "근거의 조건 요약이며, 전체 조건 문자열은 evidence.json에 있다. 판정은 수치의 우열이 아니라 "
-                        "비교 가능성에 대한 것이다.",
-                        "종합 단계(LLM)가 항목별 실험 조건(모델·문맥 길이·HW·정밀도)을 대조한 판정. 조건 요약과 판정 이유는 "
-                        "appendix.md·evidence.json 참고 (쪽수 제한으로 본문에서는 판정만 표시).")
+
     ref = "\n".join(report_mod._reference(state, compact=True)) + "\n"
-    out_lines = []
-    for line in head.splitlines():
-        if line.startswith("| 항목 | TurboQuant 조건 (근거 수) |"):
-            out_lines.append("| 항목 | TurboQuant 근거 수 | CXL-PNM 근거 수 | 판정 |")
-        elif line.startswith("|---|---|---|---|---|") and out_lines and out_lines[-1].startswith("| 항목 | TurboQuant 근거 수"):
-            out_lines.append("|---|---|---|---|")
-        elif line.startswith("| ") and line.count(" | ") == 4 and any(
-                line.startswith(f"| {p}-") for p in ("TRL", "MKT", "STK", "DOM")) and ("조건 차이" in line or "비교 가능" in line or "정보 부족" in line):
-            cells = line.split(" | ")
-            n1 = re.search(r"\((\d+)\)\s*$", cells[1]); n2 = re.search(r"\((\d+)\)\s*$", cells[2])
-            out_lines.append(f"{cells[0]} | {n1.group(1) if n1 else '-'} | {n2.group(1) if n2 else '-'} | {cells[3]} |")
-        else:
-            out_lines.append(line)
-    return "\n".join(out_lines) + "\n" + ref
+    return head.rstrip("\n") + "\n" + ref
 
 
 def finalize(state: OrchestratorState) -> dict:

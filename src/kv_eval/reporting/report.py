@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 
+import re
+
 from .. import progress
 from ..agents.synthesis import synthesize
 from ..config import output_root, technologies_config
@@ -114,18 +116,13 @@ def _ch2(state: MainState, names: dict, assessment: dict | None = None) -> list[
         L += [f"### 2.{1 if tid == 'turboquant' else 2} {names.get(tid, tid)} — "
              f"{'데이터 표현의 압축' if tid == 'turboquant' else '저장·계산 구조의 재구성'}", "",
              f"분류: {t.get('group', '?')} / {t.get('category', '?')}", ""]
-        L += [f"- **{label}**: {_brief_val(state, tid, field, 150)}" for label, field in brief_rows] + [""]
+        L += [f"- **{label}**: {_brief_val(state, tid, field, 120)}" for label, field in brief_rows] + [""]
     L += ["### 2.3 기술 구조 비교", "",
          "| 구분 | TurboQuant | CXL-PNM |", "|---|---|---|"]
     for label, field in (("KV cache 구성", "kv_cache_구성"), ("처리 구조", "처리_구조"), ("적용 한계", "적용_한계")):
         L.append(f"| {label} | {_brief_val(state, 'turboquant', field, 160)} | {_brief_val(state, 'cxl_pnm', field, 160)} |")
     comp = (assessment or {}).get("_comparability") or {}
-    L += ["", "### 2.4 실험 근거 비교표 — 두 기술의 수치를 같은 표에 놓고 읽어도 되는가", "",
-         "종합 단계(LLM)가 항목별로 두 기술 근거의 실험 조건(모델 크기·문맥 길이·하드웨어·정밀도)을 대조해 "
-         "'비교 가능 / 조건 차이 / 정보 부족' 중 하나로 판정하고 이유를 적는다. 조건 열은 근거 등급이 가장 높은 "
-         "근거의 조건 요약이며, 전체 조건 문자열은 evidence.json에 있다. 판정은 수치의 우열이 아니라 "
-         "비교 가능성에 대한 것이다.", "",
-         "| 항목 | TurboQuant 조건 (근거 수) | CXL-PNM 조건 (근거 수) | 판정 | 이유 |", "|---|---|---|---|---|"]
+    verdicts: dict[str, tuple[str, str, str, str]] = {}
     for c in state["rubrics"]["criteria"]:
         cid = c["id"]
         a, b = _tech_conditions(state, "turboquant", cid), _tech_conditions(state, "cxl_pnm", cid)
@@ -133,13 +130,26 @@ def _ch2(state: MainState, names: dict, assessment: dict | None = None) -> list[
             continue
         row = comp.get(cid)
         if row:
-            ta, tb, verdict, note = row["turboquant"], row["cxl_pnm"], row["verdict"], row["note"]
+            verdicts[cid] = (row["verdict"], row["turboquant"], row["cxl_pnm"], row["note"])
         else:                                   # 종합 결과에 없으면 기계 규칙 (한쪽 없음 → 정보 부족)
-            ta = _representative_condition(state, "turboquant", cid) or "근거 없음"
-            tb = _representative_condition(state, "cxl_pnm", cid) or "근거 없음"
-            verdict = "정보 부족" if not a or not b else "조건 차이"
-            note = "종합 단계 판정 없음 — 조건 문자열 기준"
-        L.append(f"| {cid} | {_short(ta, 90)} ({len(a)}) | {_short(tb, 90)} ({len(b)}) | {verdict} | {_short(note, 110)} |")
+            verdicts[cid] = ("정보 부족" if not a or not b else "조건 차이",
+                             _representative_condition(state, "turboquant", cid) or "근거 없음",
+                             _representative_condition(state, "cxl_pnm", cid) or "근거 없음",
+                             "종합 단계 판정 없음 — 조건 문자열 기준")
+    diff = [cid for cid, v in verdicts.items() if v[0] == "조건 차이"]
+    exceptions = [(cid, v) for cid, v in verdicts.items() if v[0] != "조건 차이"]
+    L += ["", "### 2.4 실험 근거 비교 가능성 — 두 기술의 수치를 같은 표에 놓고 읽어도 되는가", "",
+         f"종합 단계(LLM)가 항목별로 두 기술 근거의 실험 조건(모델 규모·문맥 길이·하드웨어·정밀도)을 대조한 결과, "
+         f"{len(verdicts)}개 항목 중 {len(diff)}개는 **조건 차이**로 수치를 직접 비교할 수 없다"
+         + (f" ({', '.join(diff)})" if diff and len(diff) <= 6 else "")
+         + ". 이 보고서가 두 기술의 점수·수치를 나란히 놓지 않는 이유다. 아래는 예외(비교 가능·정보 부족)만 적는다. "
+         "항목별 조건 요약과 판정 이유 전문은 부록 C에 있다.", ""]
+    if exceptions:
+        L += ["| 항목 | 판정 | TurboQuant 조건 | CXL-PNM 조건 | 이유 |", "|---|---|---|---|---|"]
+        for cid, (verdict, ta, tb, note) in exceptions:
+            L.append(f"| {cid} | {verdict} | {_short(ta, 70)} | {_short(tb, 70)} | {_short(note, 100)} |")
+    else:
+        L.append("(예외 없음 — 모든 항목이 조건 차이)")
     L.append("")
     return L
 
@@ -166,6 +176,62 @@ def _ch3(state: MainState) -> list[str]:
 
 
 # ---------- 4~5. 기술별 평가 결과 ----------
+
+def _evidence_profile(state: MainState, tech_id: str) -> list[str]:
+    """채점에 인용된 근거의 구성: 수·등급·pro/con·출처 유형·최신성. 편향 통제의 근거를 독자가 직접 볼 수 있게."""
+    pool = {e.evidence_id: e for e in state.get("evidence_pool", [])}
+    cited = []
+    seen = set()
+    for r in state.get("final_results", []):
+        if r.tech_id != tech_id:
+            continue
+        for b in r.evidence:
+            if b.evidence_id in pool and b.evidence_id not in seen:
+                seen.add(b.evidence_id)
+                cited.append(pool[b.evidence_id])
+    if not cited:
+        return ["(인용된 근거 없음)", ""]
+    grades = {g: sum(1 for e in cited if e.evidence_grade == g) for g in "ABCD"}
+    pro = sum(1 for e in cited if e.stance == "pro")
+    srcs = {}
+    for e in cited:
+        srcs[e.source_type] = srcs.get(e.source_type, 0) + 1
+    top_src = ", ".join(f"{k} {v}" for k, v in sorted(srcs.items(), key=lambda x: -x[1])[:4])
+    publishers = len({(e.source_title, e.publisher) for e in cited})
+    recent = sum(1 for e in cited if (e.published_at or "") >= "2025-01-01")
+    dated = sum(1 for e in cited if e.published_at)
+    return [f"인용 근거 {len(cited)}건 — 등급 A {grades['A']} / B {grades['B']} / C {grades['C']} / D {grades['D']}, "
+            f"긍정 {pro} / 비판 {len(cited) - pro}, 출처 {publishers}곳, 출처 유형: {top_src}. "
+            f"게재일이 있는 {dated}건 중 2025-01 이후 {recent}건.", ""]
+
+
+def _key_numbers(state: MainState, tech_id: str, limit: int = 5) -> list[str]:
+    """A·B등급이면서 수치와 조건이 모두 있는 근거를 등급·관련 항목 순으로 뽑아 '수치 + 조건 + 출처'로 보여준다."""
+    pool = {e.evidence_id: e for e in state.get("evidence_pool", [])}
+    cited_ids = {b.evidence_id for r in state.get("final_results", []) if r.tech_id == tech_id for b in r.evidence}
+    cands = [pool[i] for i in cited_ids if i in pool and pool[i].evidence_grade in "AB"
+             and _NUM_IN_TEXT.search(pool[i].claim) and (pool[i].conditions or "").strip()]
+    cands.sort(key=lambda e: (_GRADE_ORDER[e.evidence_grade], e.criterion_id, 0 if e.stance == "con" else 1))
+    picked, seen_src, out = [], set(), []
+    for e in cands:                                   # 같은 출처는 1건만 → 출처 다양성
+        key = (e.source_title, e.publisher)
+        if key in seen_src:
+            continue
+        seen_src.add(key)
+        picked.append(e)
+        if len(picked) >= limit:
+            break
+    if not picked:
+        return ["(A·B등급 수치 근거 없음)", ""]
+    out += ["| 항목 | 등급/방향 | 수치가 포함된 주장 | 조건 | 출처 |", "|---|---|---|---|---|"]
+    for e in picked:
+        out.append(f"| {e.criterion_id} | {e.evidence_grade}/{e.stance} | {_short(e.claim, 95)} | "
+                   f"{_short(e.conditions, 60)} | {_short(e.publisher, 20)} ({(e.published_at or 'n.d.')[:7]}) |")
+    return out + [""]
+
+
+_NUM_IN_TEXT = re.compile(r"\d")
+
 
 def _criterion_row(r, pub_by_id: dict[str, str] | None = None, show_caps: bool = True) -> str:
     """근거 열: 등급 분포(pro/con)와 발행 주체 2곳까지. evidence_id 전체 목록은 부록 A에.
@@ -223,7 +289,10 @@ def _tech_chapter(state: MainState, tech_id: str, names: dict, assessment: dict,
         L += header.split("\n")
         L += [_criterion_row(r, pub_by_id, show_caps) for r in rows]
         L.append("")
-    L += [f"### {num}.5 관점 간 상충 지점과 정보 공백 (P1~P6)", ""]
+    L += [f"### {num}.5 근거 프로필과 핵심 수치 근거 (A·B등급, 조건 포함)", ""]
+    L += _evidence_profile(state, tech_id)
+    L += _key_numbers(state, tech_id)
+    L += [f"### {num}.6 관점 간 상충 지점과 정보 공백 (P1~P6)", ""]
     own = [c for c in state.get("conflicts", []) if c.tech_id == tech_id]
     if own:
         for c in own:
@@ -275,11 +344,24 @@ def _ch8(state: MainState, assessment: dict) -> list[str]:
         "NA는 기술의 실패가 아니라 공개 근거로 확인되지 않았다는 뜻이다.", ""]
     for g in gaps:
         L.append(f"- {g.tech_id} {g.criterion_id}: {g.reason}")
-    L += ["", "### 8.3 평가 시스템의 한계", "",
+    fl = state.get("fanout_log") or []
+    v = state.get("quality_verdict")
+    if fl or v is not None:
+        L += ["### 8.3 평가 과정 기록 (실행 추적)", ""]
+        if fl:
+            L.append("수집 worker fan-out: " + " → ".join(
+                f"round {f.get('round')} {f.get('count')}개({f.get('mode', '')}, 셀 {f.get('cells', '?')})" for f in fl)
+                + f". 균형 점검 재시도 {state.get('retry_round', 0)}라운드.")
+        if v is not None:
+            rp = ", ".join(f"{k} {'통과' if ok else '미달'}" for k, ok in v.rule_pass.items())
+            js = (", ".join(f"{k} {s}" for k, s in v.judge_scores.items()) if v.judge_scores else "미호출")
+            L.append(f"보고서 품질 평가 {v.round}회차: 규칙 {rp} / LLM Judge {js} → {'통과' if v.passed else '미달 기록'}.")
+        L.append("")
+    L += ["### 8.4 평가 시스템의 한계", "",
          "검색 범위는 코퍼스 매니페스트(최대 200쪽)와 웹 검색 max_results=5로 제한된다. "
          "임베딩 검색 성능은 eval/retrieval/model_selection.md의 Hit@K 실험 결과를 따른다. "
          "채점은 LLM 자동 채점이며 사람 검토 전 초안이다.", "",
-         "### 8.4 추가 검증 과제", "",
+         "### 8.5 추가 검증 과제", "",
          "- deliverables/RAG-Design_*.pdf D-12 사람 검토 체크리스트 수행 (부록 D)",
          "- 정보 공백(NA) 항목 원문 재확인",
          "- eval/retrieval 재현성 확인 후 임베딩 모델 재확정 여부 검토", ""]
@@ -301,13 +383,25 @@ def _appendix(state: MainState) -> list[str]:
         for b in r.evidence:
             L.append(f"  - [{b.grade}/{b.stance}] {b.evidence_id}: {b.claim} ({b.source}, {b.date})")
         L.append("")
-    L += ["### B. 검색 로그와 재시도 이력", "",
-         "| round | 기술 | 항목 | 결과 수 | 재작성 | 검색일 |", "|---|---|---|---|---|---|"]
-    for s in state.get("search_log", []):
-        L.append(f"| {s.get('round')} | {s.get('tech_id')} | {s.get('criterion_id')} | "
-                f"{s.get('results')} | {s.get('rewritten')} | {s.get('searched_at')} |")
-    L += ["", "### C. 평가 루브릭 전문", "", "`configs/rubrics.json` 참고 (이 보고서에는 요약만 포함).", "",
-         "### D. 사람 검토 체크리스트와 검토 결과", "",
+    L += ["### B. 검색 로그와 재시도 이력 (셀 단위 집계)", "",
+         "| 기술 | 항목 | 라운드 | 수집 worker 수 | 근거 수 합계 | 쿼리 재작성 |", "|---|---|---|---|---|---|"]
+    agg: dict[tuple, dict] = {}
+    for s_ in state.get("search_log", []):
+        k = (s_.get("tech_id"), s_.get("criterion_id"))
+        a = agg.setdefault(k, {"rounds": set(), "workers": 0, "results": 0, "rewritten": 0})
+        a["rounds"].add(s_.get("round")); a["workers"] += 1
+        a["results"] += int(s_.get("results") or 0); a["rewritten"] += int(bool(s_.get("rewritten")))
+    for (tid, cid), a in sorted(agg.items(), key=lambda x: (x[0][0] or "", x[0][1] or "")):
+        L.append(f"| {tid} | {cid} | {', '.join(str(r) for r in sorted(a['rounds'], key=lambda r: (r is None, r)))} | "
+                 f"{a['workers']} | {a['results']} | {a['rewritten']} |")
+    comp = (state.get("final_assessment") or {}).get("_comparability") or {}
+    if comp:
+        L += ["", "### C. 실험 조건 비교 판정 전문 (2.4)", "",
+             "| 항목 | 판정 | TurboQuant 조건 | CXL-PNM 조건 | 이유 |", "|---|---|---|---|---|"]
+        for cid, row in comp.items():
+            L.append(f"| {cid} | {row['verdict']} | {row['turboquant']} | {row['cxl_pnm']} | {row['note']} |")
+    L += ["", "### D. 평가 루브릭 전문", "", "`configs/rubrics.json` 참고 (이 보고서에는 요약만 포함).", "",
+         "### E. 사람 검토 체크리스트와 검토 결과", "",
          "- [ ] 주요 수치가 실제 원문에 존재하는가", "- [ ] 출처의 발행 주체와 날짜가 맞는가",
          "- [ ] 실측·시뮬레이션·주장을 올바르게 구분했는가",
          "- [ ] TurboQuant와 CXL-PNM에 같은 검색 규칙을 적용했는가",
