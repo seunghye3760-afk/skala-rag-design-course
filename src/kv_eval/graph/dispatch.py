@@ -52,7 +52,7 @@ def evidence_join(state: MainState) -> dict:
     excluded = [o.subtask_id for o in outs if o.status == "excluded"]
     progress.step("evidence_join", f"round {rnd} Worker {len(outs)}개 완료 (제외 {len(excluded)}) · "
                   f"근거 {len(state.get('evidence_pool', []))}건 누적")
-    return {}
+    return {"node_status": {"evidence_join": f"done r{rnd} workers={len(outs)} excluded={len(excluded)}"}}
 
 
 def score_join(state: MainState) -> dict:

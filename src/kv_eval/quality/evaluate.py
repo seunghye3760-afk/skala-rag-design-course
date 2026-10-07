@@ -16,8 +16,9 @@ from pathlib import Path
 
 from langgraph.graph import END
 
-from .. import progress
+from .. import obs, progress
 from ..config import runtime
+from ..graph.guards import control_step, step_limit_reached
 from ..graph.state import MainState
 from ..graph.task_schema import RetryTarget
 from .checks import check_bias, check_coverage, check_groundedness, check_neutrality
@@ -78,7 +79,7 @@ def quality_eval(state: MainState) -> dict:
         try:
             scores, judge_issues, dropped = judge(state)
             judge_note = f"judge 점수 {scores}, 검증된 위반 {len(judge_issues)}건, 인용 불일치로 버린 위반 {dropped}건"
-        except Exception as e:      # judge 실패로 그래프가 멈추지 않게 — 규칙 판정만으로 진행
+        except Exception as e:  # noqa: BLE001 — judge 실패로 그래프가 멈추지 않게 — 규칙 판정만으로 진행
             judge_note = f"judge 실패 → 규칙 판정만 사용 ({type(e).__name__}: {e})"
 
     axes = []
@@ -90,7 +91,10 @@ def quality_eval(state: MainState) -> dict:
         axes.append(AxisVerdict(axis=axis, passed=rule_passed and not judge_failed, rule_passed=rule_passed,
                                 judge_score=score, issues=rule_issues[axis] + j_iss))
 
+    ctl = control_step(state, "quality_eval", f"done q{qround}")
     action, reason = _decide(axes, qround, cfg["max_rounds"])
+    if action in ("replan", "resynthesize") and step_limit_reached(ctl):
+        action, reason = "give_up", f"{reason} → 그러나 step 상한 도달로 종료"
     verdict = EvalVerdict(round=qround, passed=action == "pass", action=action, axes=axes,
                           reason=f"{reason} · {judge_note}")
 
@@ -99,8 +103,10 @@ def quality_eval(state: MainState) -> dict:
         json.dumps(verdict.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
     summary = " / ".join(f"{a.axis} {'O' if a.passed else 'X'}({len(a.issues)})" for a in axes)
     progress.step("quality_eval", f"round {qround}: {summary} → {action}")
+    obs.log_decision(state, "quality_eval", action, verdict.reason, quality_round=qround,
+                     axes={a.axis: {"passed": a.passed, "judge": a.judge_score, "issues": len(a.issues)} for a in axes})
 
-    upd: dict = {"eval_result": verdict, "quality_round": qround + 1}
+    upd: dict = {"eval_result": verdict, "quality_round": qround + 1, **ctl}
     if action == "replan":
         upd["retry_targets"] = _retry_targets(verdict)
         upd["retry_round"] = state.get("retry_round", 0) + 1

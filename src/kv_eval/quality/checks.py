@@ -30,7 +30,7 @@ _NEUTRALITY_RE = re.compile(
     r"(더|보다|가장)\s*(우수|우월|낫|유망|뛰어나|효과적)|우위에|열등|압도|승자|패자|"
     r"추천(한다|합니다|된다)|권장(한다|합니다|된다)|선택해야|도입해야|채택해야|"
     r"총점|합산\s*점수|순위|[1-9]\s*위\b|"
-    r"\b(better than|superior|outperforms?|recommend(ed)?|the winner)\b", re.I)
+    r"\b(better than|superior|outperforms?|recommend(ed)?|the winner)\b", re.IGNORECASE)
 # 항목 ID·시나리오 번호의 숫자는 수치 주장이 아니다
 _ID_RE = re.compile(r"(TRL|MKT|STK|DOM)-\d+|\bP\d+\b|시나리오\s*\d|TRL\s*\d")
 _SENT_SPLIT = re.compile(r"(?<=[.!?다])\s+")
@@ -80,7 +80,7 @@ def check_groundedness(state: MainState, report_text: str) -> list[QualityIssue]
                                        detail=f"evidence_pool에 없는 근거 인용: {missing[:3]}"))
 
     ref = report_text.split("## REFERENCE", 1)[-1] if "## REFERENCE" in report_text else ""
-    if any(r.evidence for r in finals.values()) and not re.search(r"^- ", ref, re.M):
+    if any(r.evidence for r in finals.values()) and not re.search(r"^- ", ref, re.MULTILINE):
         issues.append(QualityIssue(axis="groundedness", source="rule", detail="REFERENCE가 비어 있음"))
 
     allowed: set[str] = set()

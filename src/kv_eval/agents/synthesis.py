@@ -21,7 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .. import progress
-from ..config import ROOT, runtime
+from ..config import ROOT
 from ..graph.state import MainState
 from ..graph.task_schema import ConflictCandidate, TechId
 
@@ -121,10 +121,9 @@ def _build_messages(state: MainState) -> list[dict]:
 
 
 def _get_llm():
-    from langchain_openai import ChatOpenAI  # 무거운 라이브러리는 함수 안에서 import
-    rt = runtime()["llm"]
-    model = rt.get("model") or "gpt-4.1-mini"
-    return ChatOpenAI(model=model, temperature=rt.get("temperature", 0)).with_structured_output(_Synthesis)
+    # 공용 chat_model 사용: 모델은 runtime.yaml 한 곳에서, gpt-5 계열 temperature 미지원도 거기서 처리
+    from ..llm import chat_model
+    return chat_model().with_structured_output(_Synthesis)
 
 
 def _apply(state: MainState, out: _Synthesis) -> dict:

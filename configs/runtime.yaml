@@ -30,6 +30,8 @@ retry:
 orchestrator:
   max_subtasks_per_round: 80   # 라운드당 Worker 상한 (셀 36 × 채널 최대 3 = 108 → 선택 채널부터 제외)
   worker_max_attempts: 2       # Worker 예외 시 재시도 포함 총 시도 수. 소진되면 excluded로 기록하고 계속
+  max_control_steps: 20        # 조정 노드(plan·balance·quality) 통과 총 상한 — 넘으면 루프 대신 마무리 경로
+  recursion_limit: 200         # LangGraph 슈퍼스텝 상한 (마지막 안전망)
 
 quality:                       # 보고서 품질 평가 (Hybrid: 규칙 + LLM Judge)
   max_rounds: 2                # 미달 시 재계획/재작성 루프 상한. 소진되면 판정만 기록하고 종료

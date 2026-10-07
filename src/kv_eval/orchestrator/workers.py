@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from .. import progress
+from .. import obs, progress
 from ..config import runtime
 from ..evidence.collect import collect_evidence
 from ..graph.task_schema import CollectTask
@@ -30,7 +30,7 @@ def run_subtask(inp: WorkerInput) -> dict:
     for attempt in range(1, max_attempts + 1):
         try:
             out = collect_evidence(task, channel=st.channel, queries=queries)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 어떤 수집 오류든 같은 재시도·제외 규칙 적용
             error = e
             progress.step("run_subtask", f"{st.subtask_id} 실패 ({attempt}/{max_attempts}): "
                           f"{type(e).__name__}: {e}")
@@ -41,9 +41,11 @@ def run_subtask(inp: WorkerInput) -> dict:
 
     msg = f"{type(error).__name__}: {error}"[:300]
     progress.step("run_subtask", f"{st.subtask_id} 재시도 소진 → 제외하고 계속")
+    obs.log_decision({"run_id": inp.run_id, "trace_id": inp.trace_id}, "run_subtask", "excluded", msg,
+                     subtask_id=st.subtask_id, attempts=max_attempts)
     log = {"tech_id": st.tech_id, "criterion_id": st.criterion_id, "channel": st.channel,
            "round": st.round, "queries": queries, "results": 0, "rewritten": False,
            "searched_at": date.today().isoformat(), "error": msg}
-    return {"search_log": [log], "worker_outcomes": [WorkerOutcome(
+    return {"search_log": [log], "last_error": f"{st.subtask_id}: {msg}", "worker_outcomes": [WorkerOutcome(
         subtask_id=st.subtask_id, round=st.round, status="excluded", attempts=max_attempts,
         evidence_count=0, error=msg)]}

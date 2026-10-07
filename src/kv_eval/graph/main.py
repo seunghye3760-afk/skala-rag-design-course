@@ -16,10 +16,10 @@ from .. import progress
 from ..agents.score_task import score_task
 from ..agents.tech_research import tech_research
 from ..config import rubrics, technologies_config
-from ..quality.evaluate import quality_eval, route_after_quality
-from ..reporting.report import synthesize_report
 from ..orchestrator.planner import fan_out_workers, plan_tasks
 from ..orchestrator.workers import run_subtask
+from ..quality.evaluate import quality_eval, route_after_quality
+from ..reporting.report import synthesize_report
 from ..rules.apply import apply_rules
 from ..rules.balance import balance_check, route_after_balance
 from .dispatch import evidence_join, fan_out_score, score_dispatch, score_join
@@ -37,7 +37,8 @@ def load_rubrics(state: MainState) -> dict:
     return {"rubrics": rubrics()}
 
 
-def build_graph():
+def build_graph(checkpointer=None):
+    """checkpointer를 주면 run_id(thread_id) 단위로 체크포인트가 저장돼 중단 지점부터 재개할 수 있다."""
     g = StateGraph(MainState)
     for name, fn in [("load_config", load_config), ("load_rubrics", load_rubrics),
                      ("tech_research", tech_research), ("plan_tasks", plan_tasks),
@@ -63,4 +64,4 @@ def build_graph():
     g.add_edge("synthesize_report", "quality_eval")
     g.add_conditional_edges("quality_eval", route_after_quality,
                             ["plan_tasks", "synthesize_report", END])
-    return g.compile()
+    return g.compile(checkpointer=checkpointer)

@@ -57,6 +57,8 @@ class WorkerInput(BaseModel):
     subtask: SubTask
     tech: dict
     criterion: dict
+    run_id: str = "run"            # 결정 로그 위치·상관 키 (Worker는 State 전체를 받지 않는다)
+    trace_id: str | None = None
 
 
 class WorkerOutcome(BaseModel):

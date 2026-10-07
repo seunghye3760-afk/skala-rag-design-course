@@ -45,7 +45,7 @@ def _norm(s: str) -> str:
 
 def _sections() -> dict[str, str]:
     text = (ROOT / "prompts" / "quality" / "judge.md").read_text(encoding="utf-8")
-    parts = re.split(r"^## (\w+)\s*$", text, flags=re.M)
+    parts = re.split(r"^## (\w+)\s*$", text, flags=re.MULTILINE)
     return {parts[i]: parts[i + 1].strip() for i in range(1, len(parts), 2)}
 
 

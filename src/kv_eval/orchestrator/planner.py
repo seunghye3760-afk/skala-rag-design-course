@@ -20,8 +20,9 @@ from typing import Literal
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-from .. import progress
+from .. import obs, progress
 from ..config import ROOT, criteria_list, criterion, runtime
+from ..graph.guards import control_step
 from ..graph.state import MainState
 from .schema import Channel, Plan, QueryPair, SubTask, WorkerInput
 
@@ -97,7 +98,7 @@ def _default_draft(cells: list[dict], rub: dict, why: str) -> _PlanDraft:
 
 def _prompt_sections() -> dict[str, str]:
     text = (ROOT / "prompts" / "orchestrator" / "plan.md").read_text(encoding="utf-8")
-    parts = re.split(r"^## (\w+)\s*$", text, flags=re.M)
+    parts = re.split(r"^## (\w+)\s*$", text, flags=re.MULTILINE)
     return {parts[i]: parts[i + 1].strip() for i in range(1, len(parts), 2)}
 
 
@@ -205,7 +206,7 @@ def plan_tasks(state: MainState) -> dict:
     else:
         try:
             draft = _llm_draft(state, cells, mode)
-        except Exception as e:      # 계획 실패로 전체가 멈추지 않도록 기본 계획으로 대체
+        except Exception as e:  # noqa: BLE001 — 계획 실패로 전체가 멈추지 않도록 기본 계획으로 대체
             progress.step("plan_tasks", f"LLM 계획 실패 → 기본 계획 사용: {type(e).__name__}: {e}")
             draft = _default_draft(cells, state["rubrics"], f"LLM 계획 실패 fallback ({type(e).__name__})")
 
@@ -216,7 +217,10 @@ def plan_tasks(state: MainState) -> dict:
     progress.step("plan_tasks", f"{mode} round {rnd}: 셀 {len(cells)}개 → Worker {len(subtasks)}개 "
                   f"({', '.join(f'{k} {v}' for k, v in sorted(by_ch.items()))})"
                   + (f" · 가드 보정 {len(notes)}건" if notes else ""))
-    return {"plan": plan}
+    path = obs.dump_plan(state, plan)
+    obs.log_decision(state, "plan_tasks", f"{mode}: workers={len(subtasks)}", draft.rationale,
+                     round=rnd, cells=len(cells), by_channel=dict(by_ch), guard_notes=notes, plan_file=str(path))
+    return {"plan": plan, **control_step(state, "plan_tasks", f"done r{rnd} workers={len(subtasks)}")}
 
 
 def fan_out_workers(state: MainState) -> list[Send] | str:
@@ -227,5 +231,6 @@ def fan_out_workers(state: MainState) -> list[Send] | str:
     techs = {t["tech_id"]: t for t in state["technologies"]}
     rub = state["rubrics"]
     return [Send("run_subtask", WorkerInput(subtask=s, tech=techs[s.tech_id],
-                                            criterion=criterion(rub, s.criterion_id)))
+                                            criterion=criterion(rub, s.criterion_id),
+                                            run_id=state.get("run_id", "run"), trace_id=state.get("trace_id")))
             for s in plan.subtasks]
