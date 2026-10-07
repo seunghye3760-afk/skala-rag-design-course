@@ -174,3 +174,14 @@ report.pdf 생성 후 사람 검증 후 평가하는 항목(체크박스)은 추
 2. **이민기**: RAG 적용 대상 설계, AI 루브릭 설계, 근거 수집 및 기술 평가 설계
 3. **박재흥**: RAG 적용 대상 설계, 시장성 및 이해관계자 평가 설계, 설계서 현행화 점검
 4. **김승혜**: 기술 선정 방식 설계, 관점별 웹 가드레일 설계, 문서·임베딩·검색 및 그래프 통합
+
+## Orchestrator-Workers 실행 (Agent 과제)
+
+RAG 실습 그래프(`app.py`)는 그대로 두고, `src/kv_eval/orchestrator/`에 Orchestrator-Workers 조정 계층을 따로 구성했다
+(계획 노드 `plan_tasks` → 동적 fan-out → worker fallback → 균형 점검 → 보고서 → 품질 평가 4항목 + 미달 시 Loop).
+설계 근거·State 7항목·채점 대응표는 `docs/agent_assignment/00_과제_프롬프트.md`, 구조는 `docs/architecture.md`의 Orchestrator 절 참고.
+
+```bash
+uv run python app_agent.py --criteria TRL-1,DOM-4   # 작게
+uv run python app_agent.py                          # 전체 — outputs/runs/<run_id>/{report.md,report.pdf,decision_log.jsonl,report_meta.json}
+```

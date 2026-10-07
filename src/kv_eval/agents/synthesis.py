@@ -111,6 +111,9 @@ def _conflict_block(state: MainState, names: dict) -> str:
 
 def _build_messages(state: MainState) -> list[dict]:
     system = (ROOT / PROMPT_FILE).read_text(encoding="utf-8")
+    feedback = state.get("synthesis_feedback")          # orchestrator 품질 평가 미달 시 재생성 피드백 (MainState에는 없음)
+    if feedback:
+        system += ("\n\n[이전 생성본의 품질 평가 미달 사유 — 이번 생성에서 반드시 고칠 것]\n" + str(feedback))
     names = {t["tech_id"]: t["name"] for t in state["technologies"]}
     user = "\n\n".join([_tech_block(state, t["tech_id"]) for t in state["technologies"]]
                        + ["## 상충 후보", _conflict_block(state, names)])

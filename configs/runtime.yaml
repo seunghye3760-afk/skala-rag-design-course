@@ -28,3 +28,19 @@ retry:
   query_rewrite_max: 1 # 수집 단계 쿼리 재작성 (항목당)
 
 cache_dir: .cache      # 검색 캐시 (재현성·API 사용량 절감)
+
+# ---- Orchestrator-Workers (app_agent.py / src/kv_eval/orchestrator) ----
+fallback:
+  worker_retry: 1      # worker 예외 시 같은 입력으로 재시도 횟수
+  on_failure: exclude  # 재시도 소진: 수집 셀은 제외(info_gap 기록), 채점 항목은 NA
+
+concurrency:
+  max_concurrency: 8   # Send 병렬 worker 동시 실행 상한 (Tavily·OpenAI rate limit 기준)
+
+quality:
+  max_rounds: 2        # evaluate_report 횟수 상한 — 도달 시 미달 항목을 기록하고 정상 종료
+  judge_threshold: 4   # LLM Judge 4항목 통과 임계 (1~5)
+  max_pages: 10        # 보고서 PDF 쪽수 상한 — 초과 시 finalize가 부록을 appendix.md로 분리
+
+limits:
+  recursion_limit: 150 # LangGraph 슈퍼스텝 상한 (안전장치; 정상 실행은 수십 스텝)

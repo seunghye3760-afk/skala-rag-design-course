@@ -1,0 +1,24 @@
+# 보고서 품질 평가 규칙 (orchestrator/quality.py evaluate_report). 코드 규칙용 상수 — LLM Judge 임계값은 runtime.yaml quality.
+forbidden_phrases:            # 중립성: 본문(부록·REFERENCE 제외)에 0건이어야 함. 우열·추천·순위·총점 표현
+  - "더 우수"
+  - "더 우월"
+  - "우월하다"
+  - "가장 우수"
+  - "추천한다"
+  - "추천함"
+  - "권장한다"
+  - "순위를 매"
+  - "1위"
+  - "2위"
+  - "승자"
+  - "패자"
+  - "총점"
+  - "종합 점수"
+  - "종합점수"
+  - "더 유망"
+  - "더 낫다"
+  - "보다 낫"
+bias:
+  min_sources_per_tech: 2       # 기술별 인용 출처(제목+발행 주체) 최소 수
+  min_pro_con_ratio: 0.5        # 채점된 항목 중 pro·con 양쪽 근거가 있는 비율 하한
+  max_single_source_ratio: 0.5  # 채점된 항목 중 단일 출처 의존 비율 상한

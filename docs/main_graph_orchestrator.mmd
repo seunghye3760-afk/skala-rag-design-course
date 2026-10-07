@@ -1,0 +1,55 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	init(init)
+	load_config(load_config)
+	load_rubrics(load_rubrics)
+	tech_research(tech_research)
+	plan_tasks(plan_tasks)
+	collect_worker(collect_worker)
+	score_dispatch(score_dispatch)
+	score_worker(score_worker)
+	balance_check(balance_check)
+	apply_rules(apply_rules)
+	synthesize_report(synthesize_report)
+	evaluate_report(evaluate_report)
+	judge_node(judge_node)
+	finalize(finalize)
+	evidence_join(evidence_join<hr/><small><em>defer = True</em></small>)
+	score_join(score_join<hr/><small><em>defer = True</em></small>)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> init;
+	apply_rules --> synthesize_report;
+	balance_check -.-> apply_rules;
+	balance_check -.-> plan_tasks;
+	balance_check -.-> score_dispatch;
+	collect_worker --> evidence_join;
+	evaluate_report -.-> finalize;
+	evaluate_report -.-> judge_node;
+	evaluate_report -.-> plan_tasks;
+	evaluate_report -.-> score_dispatch;
+	evaluate_report -.-> synthesize_report;
+	evidence_join --> score_dispatch;
+	init --> load_config;
+	judge_node -.-> finalize;
+	judge_node -.-> plan_tasks;
+	judge_node -.-> score_dispatch;
+	judge_node -.-> synthesize_report;
+	load_config --> load_rubrics;
+	load_rubrics --> tech_research;
+	plan_tasks -.-> collect_worker;
+	plan_tasks -.-> score_dispatch;
+	score_dispatch -.-> score_worker;
+	score_join --> balance_check;
+	score_worker -.-> evidence_join;
+	score_worker --> score_join;
+	synthesize_report --> evaluate_report;
+	tech_research --> plan_tasks;
+	finalize --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
