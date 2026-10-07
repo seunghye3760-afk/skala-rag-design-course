@@ -219,7 +219,16 @@ def _judge_input(state: OrchestratorState, secs: dict[str, str]) -> str:
     scope = (f"[이번 실행 범위] 평가 항목 {[c['id'] for c in scoped]} / 관점 {agents}. "
              f"범위 밖 관점·항목이 비어 있는 것은 설계된 축소 실행이므로 coverage·bias 감점 사유로 삼지 않는다."
              if state.get("only_criteria") else "[이번 실행 범위] 전체 항목 · 4관점")
-    return f"{scope}\n\n[보고서 본문]\n{body}\n\n[인용 근거 원문 발췌]\n" + "\n".join(lines)
+    derived = ["[채점·규칙 산출값 — 본문의 점수·TRL·상충 수는 여기서 나온 것이며 발췌에 없어도 추적된 것으로 본다]"]
+    for r in sorted(state.get("final_results", []), key=lambda r: (r.tech_id, r.criterion_id)):
+        derived.append(f"- {r.tech_id} {r.criterion_id}: {r.score}점 (확신도 {r.confidence}, 인용 {len(r.evidence)}건)")
+    for t in state.get("trl_results", []):
+        derived.append(f"- {t.tech_id}: TRL {t.trl_level} (확신도 {t.trl_confidence}), 기반 부품 성숙도 {t.component_maturity}")
+    conf = state.get("conflicts", [])
+    derived.append(f"- 상충 후보 {sum(1 for c in conf if c.status == 'candidate')}건, 정보 공백 비교 "
+                   f"{sum(1 for c in conf if c.status == 'info_gap')}건, info_gaps {len(state.get('info_gaps', []))}건")
+    return (f"{scope}\n\n" + "\n".join(derived) + f"\n\n[보고서 본문]\n{body}\n\n[인용 근거 원문 발췌]\n"
+            + "\n".join(lines))
 
 
 def judge_node(state: OrchestratorState) -> dict:

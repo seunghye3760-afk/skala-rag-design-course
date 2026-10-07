@@ -341,9 +341,14 @@ def _ch8(state: MainState, assessment: dict) -> list[str]:
     L += \
         ["### 8.2 정보 공백(NA) 항목과 해석 주의사항", "",
         f"{len(gaps)}건이 재시도 한도(2라운드) 소진 후에도 정보 공백으로 남았다. "
-        "NA는 기술의 실패가 아니라 공개 근거로 확인되지 않았다는 뜻이다.", ""]
+        "NA는 기술의 실패가 아니라 공개 근거로 확인되지 않았다는 뜻이다. 사유 전문은 info_gaps.json.", ""]
+    by_tech: dict[str, list[str]] = {}
     for g in gaps:
-        L.append(f"- {g.tech_id} {g.criterion_id}: {g.reason}")
+        short = g.reason.split(":", 1)[0].strip()            # "편향: 비판 근거 없음" → "편향"
+        detail = g.reason.split(":", 1)[1].strip() if ":" in g.reason else ""
+        by_tech.setdefault(g.tech_id, []).append(f"{g.criterion_id}({_short(detail or short, 18)})")
+    for tid, items in by_tech.items():
+        L.append(f"- **{names.get(tid, tid)}** ({len(items)}건): {', '.join(items)}")
     fl = state.get("fanout_log") or []
     v = state.get("quality_verdict")
     if fl or v is not None:
