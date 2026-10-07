@@ -85,7 +85,7 @@ def _planner_input(state: OrchestratorState, mode: Mode, cells: list[tuple[str, 
     parts.append("[계획할 항목]")
     for cid, pairs in by_cid.items():
         c = crits[cid]
-        parts.append(f"- {cid} {c['name']} ({c['agent']}): {c['question']}")
+        parts.append(f"- criterion_id={cid} ({c['name']}, {c['agent']}): {c['question']}")
         parts.append(f"  출처 힌트: {c['evidence_sources']} / 루브릭 기본 템플릿: {c['queries']}")
         parts.append(f"  대상 기술: {[t for t, _ in pairs]}")
         for tid, hint in pairs:
@@ -174,8 +174,18 @@ def _guard_template(tpl: str) -> str:
     return tpl
 
 
+def _normalize_cid(raw: str, known: list[str]) -> str:
+    raw = (raw or "").strip()
+    for cid in sorted(known, key=len, reverse=True):
+        if raw == cid or raw.startswith(cid + " ") or raw.startswith(cid + ":") or f" {cid} " in f" {raw} ":
+            return cid
+    return raw
+
+
 def _apply_guards(plan: Plan, cells, crits, run_id: str) -> tuple[dict[str, CriterionPlan], list[str]]:
     cap = int(runtime().get("plan", {}).get("max_subtasks_per_cell", 3))
+    for p in plan.items:                                               # "TRL-1 검증 환경 수준" → "TRL-1"
+        p.criterion_id = _normalize_cid(p.criterion_id, list(crits))
     by_cid = {p.criterion_id: p for p in plan.items if p.criterion_id in crits}
     notes = []
     wanted: dict[str, list[str]] = {}
@@ -201,7 +211,8 @@ def _apply_guards(plan: Plan, cells, crits, run_id: str) -> tuple[dict[str, Crit
             if not x.channels:
                 x.channels = ["web"]
     if notes:
-        decision(run_id, "plan_tasks", "plan_guard", "; ".join(notes))
+        decision(run_id, "plan_tasks", "plan_guard", "; ".join(notes),
+                 planner_ids=[p.criterion_id for p in plan.items])
     return by_cid, notes
 
 

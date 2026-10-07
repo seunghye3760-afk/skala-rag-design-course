@@ -103,7 +103,7 @@ def _condition_block(state: MainState) -> str:
         a, b = _conditions_of(state, "turboquant", cid), _conditions_of(state, "cxl_pnm", cid)
         if not a and not b:
             continue
-        lines.append(f"- {cid} {c['name']}\n  TurboQuant: {' | '.join(a) or '(근거 없음)'}\n"
+        lines.append(f"- criterion_id={cid} ({c['name']})\n  TurboQuant: {' | '.join(a) or '(근거 없음)'}\n"
                      f"  CXL-PNM: {' | '.join(b) or '(근거 없음)'}")
     return "\n".join(lines) or "(조건이 기록된 근거 없음)"
 
@@ -185,6 +185,15 @@ def _get_llm():
     return chat_model().with_structured_output(_Synthesis)
 
 
+def _normalize_cid(raw: str, known: list[str]) -> str:
+    """LLM이 'TRL-1 검증 환경 수준'처럼 id에 이름을 붙여 돌려줘도 루브릭 id로 맞춘다."""
+    raw = (raw or "").strip()
+    for cid in sorted(known, key=len, reverse=True):
+        if raw == cid or raw.startswith(cid + " ") or raw.startswith(cid + ":") or f" {cid} " in f" {raw} ":
+            return cid
+    return raw.split()[0] if raw else raw
+
+
 def _apply(state: MainState, out: _Synthesis) -> dict:
     by_id = {c.comparison_id: c for c in out.conflicts}
     conflicts: list[ConflictCandidate] = []
@@ -201,9 +210,10 @@ def _apply(state: MainState, out: _Synthesis) -> dict:
     assessment["_cross"] = out.cross_comparison.model_dump()
     assessment["_scenario"] = out.scenario_guidance.model_dump()
     assessment["_overall"] = out.overall
+    known = [c["id"] for c in state["rubrics"]["criteria"]]
     assessment["_comparability"] = {
-        x.criterion_id: {"verdict": x.verdict, "turboquant": x.turboquant_conditions,
-                         "cxl_pnm": x.cxl_pnm_conditions, "note": x.note}
+        _normalize_cid(x.criterion_id, known): {"verdict": x.verdict, "turboquant": x.turboquant_conditions,
+                                                "cxl_pnm": x.cxl_pnm_conditions, "note": x.note}
         for x in getattr(out, "condition_comparisons", [])}   # 구버전 출력(테스트 FakeOut)에도 관대하게
     return {"conflicts": conflicts, "final_assessment": assessment}
 

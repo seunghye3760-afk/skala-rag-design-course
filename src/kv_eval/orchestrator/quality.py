@@ -80,7 +80,14 @@ def check_groundedness(state: OrchestratorState, secs: dict[str, str]) -> tuple[
     if unknown:
         reasons.append(f"evidence_pool에 없는 인용 id {len(unknown)}건: {unknown[:3]}")
     ref = secs.get("## REFERENCE", "")
-    missing_ref = [i for i in cited if i in pool and pool[i].source_title not in ref]
+
+    def _in_ref(e) -> bool:        # REFERENCE는 출처 단위(제목 90자 절단 + 위치) — report._reference와 같은 기준
+        title = " ".join(e.source_title.split())
+        short = title if len(title) <= 90 else title[:89].rstrip()
+        loc = e.source_url or e.locator.doc_id or ""
+        return short in ref or (bool(loc) and loc in ref)
+
+    missing_ref = [i for i in cited if i in pool and not _in_ref(pool[i])]
     if missing_ref:
         reasons.append(f"REFERENCE에 없는 인용 근거 {len(missing_ref)}건")
         cells |= {cell_key(pool[i].tech_id, pool[i].criterion_id) for i in missing_ref}

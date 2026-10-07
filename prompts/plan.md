@@ -24,6 +24,6 @@
   `{category}` 자리도 쓸 수 있다. 기술 이름을 직접 쓰지 마라.
 - 모든 항목에 pro·con 쌍을 둔다 (한쪽만 검색 금지).
 - 없는 출처·수치를 만들지 않는다. 쿼리는 검색어일 뿐 사실 주장이 아니다.
-- 받은 항목을 빠뜨리지 않는다.
+- 받은 항목을 빠뜨리지 않는다. criterion_id는 입력에 적힌 id(예: TRL-1, DOM-4)를 글자 그대로 쓴다.
 
 [출력] items: [{criterion_id, channels: [{tech_id, channels}], query_templates: [{pro, con, focus}], reason}]
