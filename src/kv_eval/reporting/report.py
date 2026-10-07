@@ -40,6 +40,9 @@ def _brief_val(state: MainState, tech_id: str, field: str, n: int = 140) -> str:
         status, value = v.get("status") or "미보고", str(v.get("value") or "").strip()
         if not value:
             return f"({status})"
+        for junk in ("제공된 청크에 따르면 ", "제공된 청크는 ", "제공된 청크에는 ", "청크는 ", "청크에서 ", "청크에 따르면 "):
+            if value.startswith(junk):
+                value = value[len(junk):]
         return _short(value, n) + ("" if status == "reported" else f" [{status}]")
     return _short(v, n) if v else "(미보고)"
 
@@ -101,20 +104,21 @@ def _representative_condition(state: MainState, tech_id: str, cid: str) -> str:
 def _ch2(state: MainState, names: dict, assessment: dict | None = None) -> list[str]:
     tcfg = technologies_config()["technologies"]
     by_id = {t["tech_id"]: t for t in tcfg}
-    L = ["## 2. 대상 기술 개요", ""]
+    L = ["## 2. 대상 기술 개요", "",
+         "아래 내용은 기술 조사 단계(tech_research)가 논문에서 추출한 brief다. '(미보고)'는 논문에 없음, "
+         "'[확인 불가]'는 검색된 본문만으로 단정하기 어려움을 뜻한다. 채점 근거로는 쓰지 않는다.", ""]
+    brief_rows = [("해결하려는 병목", "q1_해결_병목"), ("효과가 나는 조건", "q2_효과_조건"),
+                  ("품질·비용 평가 방식", "q3_품질_비용_평가"), ("평가하지 않은 조건", "q4_미평가_조건")]
     for tid in ("turboquant", "cxl_pnm"):
         t = by_id.get(tid, {})
         L += [f"### 2.{1 if tid == 'turboquant' else 2} {names.get(tid, tid)} — "
              f"{'데이터 표현의 압축' if tid == 'turboquant' else '저장·계산 구조의 재구성'}", "",
              f"분류: {t.get('group', '?')} / {t.get('category', '?')}", ""]
-    L += ["### 2.3 기술 구조 비교표", "",
-         "논문 brief(tech_research, 설계서 B-3)에서 추출한 값. '(미보고)'는 논문에 해당 내용이 없다는 뜻.", "",
-         "| 구분 | 분류 | KV cache 구성 | 처리 구조 | 적용 한계 |", "|---|---|---|---|---|"]
-    for tid in ("turboquant", "cxl_pnm"):
-        t = by_id.get(tid, {})
-        L.append(f"| {names.get(tid, tid)} | {t.get('group', '?')} / {t.get('category', '?')} | "
-                 f"{_brief_val(state, tid, 'kv_cache_구성')} | {_brief_val(state, tid, '처리_구조')} | "
-                 f"{_brief_val(state, tid, '적용_한계')} |")
+        L += [f"- **{label}**: {_brief_val(state, tid, field, 220)}" for label, field in brief_rows] + [""]
+    L += ["### 2.3 기술 구조 비교", "",
+         "| 구분 | TurboQuant | CXL-PNM |", "|---|---|---|"]
+    for label, field in (("KV cache 구성", "kv_cache_구성"), ("처리 구조", "처리_구조"), ("적용 한계", "적용_한계")):
+        L.append(f"| {label} | {_brief_val(state, 'turboquant', field, 160)} | {_brief_val(state, 'cxl_pnm', field, 160)} |")
     comp = (assessment or {}).get("_comparability") or {}
     L += ["", "### 2.4 실험 근거 비교표 — 두 기술의 수치를 같은 표에 놓고 읽어도 되는가", "",
          "종합 단계(LLM)가 항목별로 두 기술 근거의 실험 조건(모델 크기·문맥 길이·하드웨어·정밀도)을 대조해 "
@@ -199,6 +203,8 @@ def _tech_chapter(state: MainState, tech_id: str, names: dict, assessment: dict,
 
     L = [f"## {num}. {names[tech_id]} 평가 결과", "",
         f"### {num}.1 {agent_titles['trl']} — 기법 TRL / 기반 부품 성숙도", ""]
+    if trl is None:
+        L += ["(이번 실행 범위에 TRL 항목이 없어 산출하지 않음)", ""]
     if trl:
         met = [t for t in trl.gate_trace if "충족" in t and "미충족" not in t]
         unmet = [t for t in trl.gate_trace if "미충족" in t]
@@ -208,10 +214,13 @@ def _tech_chapter(state: MainState, tech_id: str, names: dict, assessment: dict,
              f"게이트: {met[-1].split(' 조건')[0] if met else 'TRL 1'}까지 충족"
              + (f", {first_unmet}" if first_unmet else "") + " — 전체 추적은 부록 A.", ""]
     for i, agent in enumerate(("market", "stakeholder", "domain"), start=2):
-        L += [f"### {num}.{i} {agent_titles[agent]}", "",
-             "| 항목 | 점수 | 원점수 | 확신도 | 상한 적용 | 근거 |", "|---|---|---|---|---|---|"]
-        for r in sorted(by_agent.get(agent, []), key=lambda r: r.criterion_id):
-            L.append(_criterion_row(r, pub_by_id))
+        L += [f"### {num}.{i} {agent_titles[agent]}", ""]
+        rows = sorted(by_agent.get(agent, []), key=lambda r: r.criterion_id)
+        if not rows:
+            L += ["(이번 실행 범위에 포함되지 않은 관점 — `--criteria`로 항목을 좁혀 실행함)", ""]
+            continue
+        L += ["| 항목 | 점수 | 원점수 | 확신도 | 상한 적용 | 근거 |", "|---|---|---|---|---|---|"]
+        L += [_criterion_row(r, pub_by_id) for r in rows]
         L.append("")
     L += [f"### {num}.5 관점 간 상충 지점과 정보 공백 (P1~P6)", ""]
     own = [c for c in state.get("conflicts", []) if c.tech_id == tech_id]
@@ -234,7 +243,7 @@ def _ch6(assessment: dict) -> list[str]:
     cross = assessment.get("_cross", {})
     return ["## 6. 관점별 근거 대조", "",
            "### 6.1 같은 관점에서 두 기술의 근거 유형·검증 수준은 어떻게 다른가", "",
-           cross.get("근거_대조", "(생성 안 됨)"), "",
+           cross.get("관점별_근거_대조") or cross.get("근거_대조") or "(생성 안 됨)", "",
            "### 6.2 SW 접근과 HW 접근의 트레이드오프", "", cross.get("트레이드오프", "(생성 안 됨)"), "",
            "### 6.3 상호 보완 가능성 (검증되지 않은 가설)", "", cross.get("상호보완_가능성", "(생성 안 됨)"), ""]
 
@@ -249,11 +258,17 @@ def _ch7(assessment: dict) -> list[str]:
 
 
 def _ch8(state: MainState, assessment: dict) -> list[str]:
-    limits = [x for tid in ("turboquant", "cxl_pnm") for x in assessment.get(tid, {}).get("한계", [])]
     gaps = state.get("info_gaps", [])
-    L = ["## 8. 한계와 추가 검증 과제", "",
-        "### 8.1 근거의 한계", ""] + [f"- {x}" for x in limits] + \
-        ["", "### 8.2 정보 공백(NA) 항목과 해석 주의사항", "",
+    names = _names(state)
+    L = ["## 8. 한계와 추가 검증 과제", "", "### 8.1 근거의 한계", ""]
+    seen: set[str] = set()
+    for tid in ("turboquant", "cxl_pnm"):
+        items = [x for x in assessment.get(tid, {}).get("한계", []) if x not in seen]
+        seen |= set(items)
+        if items:
+            L += [f"**{names.get(tid, tid)}**"] + [f"- {x}" for x in items] + [""]
+    L += \
+        ["### 8.2 정보 공백(NA) 항목과 해석 주의사항", "",
         f"{len(gaps)}건이 재시도 한도(2라운드) 소진 후에도 정보 공백으로 남았다. "
         "NA는 기술의 실패가 아니라 공개 근거로 확인되지 않았다는 뜻이다.", ""]
     for g in gaps:

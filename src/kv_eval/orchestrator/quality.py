@@ -325,7 +325,11 @@ def finalize(state: OrchestratorState) -> dict:
         note = ["", "### 품질 평가 미달 항목", "",
                 (f"품질 평가 {v.round}회 후에도 아래 항목이 기준에 미달해 그대로 기록한다 (quality.max_rounds="
                  f"{max_quality_rounds()}). 미달은 보고서의 신뢰 한계를 뜻하며 기술 평가 결과가 아니다."), ""]
-        note += [f"- {k}" for k in v.failed_items] + ([""] + v.feedback.splitlines() if v.feedback else [])
+        note += [f"- {k}" for k in v.failed_items]
+        if v.feedback:
+            note.append("")
+            for line in v.feedback.splitlines():
+                note.append(line if len(line) <= 400 else line[:399].rstrip() + "…")
         marker = "\n## 1. 개요"
         text = text.replace(marker, "\n".join(note) + "\n" + marker, 1)
         path.write_text(text, encoding="utf-8")
