@@ -29,7 +29,9 @@ TRL·시장성·이해관계자·도메인(AI 데이터센터 LLM 추론) 4관�
   | 전체 3회 연속 (PassK) | 36 | **78 / 72 / 74** → 5·4 / 12·8 / 8·12 | 36 → … | 3회 모두 2회 | 2·3회차는 Tavily 한도 소진으로 worker 52·58개가 fallback 처리됐으나 정상 종료 |
   | 가짜 모드 (`KV_FAKE=1`) | 36 | 54 | 36 | 통과 | 키 없이 뼈대 검증 |
 
-  플래너가 매번 다른 계획을 내도 셀 커버리지는 코드 가드가 유지하고, 모든 실행이 무한 루프 없이 종료했습니다. 품질 규칙은 전 실행 통과, LLM Judge 점수는 `report_meta.json`에 기록됩니다. LangSmith 캡처: {tracing-1/2/3.png 기입}
+  플래너가 매번 다른 계획을 내도 셀 커버리지는 코드 가드가 유지하고, 모든 실행이 무한 루프 없이 종료했습니다. 품질 규칙은 전 실행 통과, LLM Judge 점수는 `report_meta.json`에 기록됩니다.
+
+  **LangSmith 트레이스** (run `20261007-163241`, 13.7분): [tracing-1.png](docs/tracing/tracing-1.png) 전체 경로와 plan_tasks → collect_worker 12개 fan-out, [tracing-2.png](docs/tracing/tracing-2.png) score_worker 4개 → balance_check → plan_tasks 재계획 → collect_worker 3개(재검색 fan-out), [tracing-3.png](docs/tracing/tracing-3.png) 재채점 2회 → apply_rules → synthesize_report → evaluate_report → judge_node → 재생성 → finalize.
 
 ---
 
