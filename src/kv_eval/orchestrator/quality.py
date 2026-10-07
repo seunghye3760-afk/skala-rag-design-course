@@ -314,7 +314,43 @@ def _enforce_page_limit(state: OrchestratorState, path: Path, text: str, pages: 
     new_pages = _pdf_pages(path.with_suffix(".pdf"))
     decision(state.get("run_id", "run"), "finalize", "split_appendix",
              f"PDF {pages}쪽 > {limit}쪽 → 부록을 appendix.md로 분리, 본문 {new_pages}쪽")
+    if new_pages is not None and new_pages > limit:
+        slim = _compact_body(state, slim)
+        path.write_text(slim, encoding="utf-8")
+        try:
+            report_mod.render_pdf(slim, path.with_suffix(".pdf"))
+        except Exception as e:  # noqa: BLE001
+            progress.step("finalize", f"PDF 재생성 실패: {type(e).__name__}: {e}")
+        before, new_pages = new_pages, _pdf_pages(path.with_suffix(".pdf"))
+        decision(state.get("run_id", "run"), "finalize", "compact_body",
+                 f"본문 {before}쪽 > {limit}쪽 → REFERENCE 압축 표기·2.4 이유 열 제거 → {new_pages}쪽")
     return new_pages
+
+
+def _compact_body(state: OrchestratorState, text: str) -> str:
+    """2단계 압축: REFERENCE를 간략 표기로 다시 쓰고, 2.4 표의 '이유' 열을 뺀다 (판정은 유지)."""
+    head, _, _ = text.partition("\n## REFERENCE")
+    head = head.replace("종합 단계(LLM)가 항목별로 두 기술 근거의 실험 조건(모델 크기·문맥 길이·하드웨어·정밀도)을 대조해 "
+                        "'비교 가능 / 조건 차이 / 정보 부족' 중 하나로 판정하고 이유를 적는다. 조건 열은 근거 등급이 가장 높은 "
+                        "근거의 조건 요약이며, 전체 조건 문자열은 evidence.json에 있다. 판정은 수치의 우열이 아니라 "
+                        "비교 가능성에 대한 것이다.",
+                        "종합 단계(LLM)가 항목별 실험 조건(모델·문맥 길이·HW·정밀도)을 대조한 판정. 조건 요약과 판정 이유는 "
+                        "appendix.md·evidence.json 참고 (쪽수 제한으로 본문에서는 판정만 표시).")
+    ref = "\n".join(report_mod._reference(state, compact=True)) + "\n"
+    out_lines = []
+    for line in head.splitlines():
+        if line.startswith("| 항목 | TurboQuant 조건 (근거 수) |"):
+            out_lines.append("| 항목 | TurboQuant 근거 수 | CXL-PNM 근거 수 | 판정 |")
+        elif line.startswith("|---|---|---|---|---|") and out_lines and out_lines[-1].startswith("| 항목 | TurboQuant 근거 수"):
+            out_lines.append("|---|---|---|---|")
+        elif line.startswith("| ") and line.count(" | ") == 4 and any(
+                line.startswith(f"| {p}-") for p in ("TRL", "MKT", "STK", "DOM")) and ("조건 차이" in line or "비교 가능" in line or "정보 부족" in line):
+            cells = line.split(" | ")
+            n1 = re.search(r"\((\d+)\)\s*$", cells[1]); n2 = re.search(r"\((\d+)\)\s*$", cells[2])
+            out_lines.append(f"{cells[0]} | {n1.group(1) if n1 else '-'} | {n2.group(1) if n2 else '-'} | {cells[3]} |")
+        else:
+            out_lines.append(line)
+    return "\n".join(out_lines) + "\n" + ref
 
 
 def finalize(state: OrchestratorState) -> dict:

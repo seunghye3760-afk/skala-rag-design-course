@@ -114,7 +114,7 @@ def _ch2(state: MainState, names: dict, assessment: dict | None = None) -> list[
         L += [f"### 2.{1 if tid == 'turboquant' else 2} {names.get(tid, tid)} — "
              f"{'데이터 표현의 압축' if tid == 'turboquant' else '저장·계산 구조의 재구성'}", "",
              f"분류: {t.get('group', '?')} / {t.get('category', '?')}", ""]
-        L += [f"- **{label}**: {_brief_val(state, tid, field, 220)}" for label, field in brief_rows] + [""]
+        L += [f"- **{label}**: {_brief_val(state, tid, field, 150)}" for label, field in brief_rows] + [""]
     L += ["### 2.3 기술 구조 비교", "",
          "| 구분 | TurboQuant | CXL-PNM |", "|---|---|---|"]
     for label, field in (("KV cache 구성", "kv_cache_구성"), ("처리 구조", "처리_구조"), ("적용 한계", "적용_한계")):
@@ -147,28 +147,21 @@ def _ch2(state: MainState, names: dict, assessment: dict | None = None) -> list[
 def _ch3(state: MainState) -> list[str]:
     rub = state["rubrics"]
     n = len(rub["criteria"])
+    by_agent = {ag: ", ".join(c["id"] for c in rub["criteria"] if c["agent"] == ag)
+                for ag in ("trl", "market", "stakeholder", "domain")}
     return ["## 3. 평가 방법", "",
-           "### 3.1 도메인과 평가 주체", "", rub["meta"]["domain"], "",
-           "### 3.2 평가 시스템 구성", "",
-           "LangGraph 기반 Agentic RAG (그림 2, src/kv_eval/graph/main.py): 근거 수집 → 채점 → "
-           "균형 점검(재시도 최대 2라운드) → 규칙 처리 → 종합 → 보고서. "
-           "검색은 논문 하이브리드 검색(bge-m3 dense + BM25) + 웹 검색을 병행한다.", "",
-           f"### 3.3 4가지 평가 관점과 {n}개 평가 항목", "",
-           "| 관점 | 항목 |", "|---|---|"] + [
-        f"| {agent} | {', '.join(c['id'] for c in rub['criteria'] if c['agent'] == agent)} |"
-        for agent in ("trl", "market", "stakeholder", "domain")
-    ] + ["", "### 3.4 근거 등급·상한·하한·NA 규칙", "",
-        "| 등급 | 의미 | 점수 상한 |", "|---|---|---|"] + [
-        f"| {g} | {desc} | {cap} |" for g, desc, cap in
-        [("A", _GRADE_KO["A"], 5), ("B", _GRADE_KO["B"], 4), ("C", _GRADE_KO["C"], 3), ("D", _GRADE_KO["D"], 3)]
-    ] + ["", "관련 근거 0건일 때만 NA. 부정 근거가 C·D뿐이면 최저 2점 (rules/caps.py).", "",
-        "### 3.5 검색 규칙, 균형 점검, 가드레일", "",
-        "검색·재작성·재시도 한도는 설계서 D-10, 균형 점검 판정 조건은 rules/balance.py에 코드로 "
-        "고정되어 있다 (근거 공백·편향·조건 누락·채점 형식 오류 4종, LLM 판정 아님).", "",
-        "### 3.6 TRL 산출과 상충 분석 방법", "",
-        "TRL은 rules/trl_gate.py의 게이트 규칙(TRL-1~5 차원 점수 조합)으로 산출하고, 상충 "
-        "후보는 rules/conflicts.py가 같은 기술 안에서 P1~P6 비교 쌍의 점수 차가 2점 이상일 때만 "
-        "뽑는다 (자동 판정 아님 — 해석은 9장 종합에서 근거·조건을 대조해 채운다).", ""]
+           f"**3.1 도메인과 평가 주체** — {rub['meta']['domain']}", "",
+           "**3.2 평가 시스템** — LangGraph Orchestrator-Workers (src/kv_eval/orchestrator): LLM 플래너가 항목별 "
+           "검색 채널·쿼리·worker 수를 계획 → 근거 수집 worker(논문 FAISS+BM25 하이브리드 + 웹 검색 + 원문 확인) → "
+           "관점별 채점 → 균형 점검(코드 규칙, 재시도 ≤ 2라운드) → 상한·TRL·상충 규칙 → 종합 → 보고서 품질 평가(규칙 + LLM Judge, ≤ 2회).", "",
+           f"**3.3 4관점 {n}개 항목** — TRL {by_agent['trl']} / 시장성 {by_agent['market']} / "
+           f"이해관계자 {by_agent['stakeholder']} / 도메인 {by_agent['domain']}.", "",
+           "**3.4 근거 등급과 상한** — A(독립 실측·공식 공시) 5점까지, B(당사자 실측·발표) 4점까지, C(시뮬레이션·추정)·"
+           "D(2차 자료) 3점까지. 관련 근거 0건일 때만 NA, 부정 근거가 C·D뿐이면 최저 2점 (rules/caps.py).", "",
+           "**3.5 검색 규칙·균형 점검·가드레일** — 두 기술에 같은 쿼리 템플릿·max_results·기간(2025-01 이후). 균형 점검은 "
+           "근거 공백·편향·조건 누락·채점 형식 오류 4종을 rules/balance.py 코드로 판정한다 (LLM 판정 아님).", "",
+           "**3.6 TRL 산출과 상충 분석** — TRL은 rules/trl_gate.py 게이트 규칙(TRL-1~5 차원 점수 조합)으로, 상충 후보는 "
+           "같은 기술 안의 비교 쌍 P1~P6 점수 차가 2점 이상일 때만 뽑고(rules/conflicts.py), 해석은 9장 종합에서 근거·조건을 대조해 채운다.", ""]
 
 
 # ---------- 4~5. 기술별 평가 결과 ----------
@@ -228,7 +221,8 @@ def _tech_chapter(state: MainState, tech_id: str, names: dict, assessment: dict,
         for c in own:
             L.append(f"- {c.comparison_id} ({c.status}, 점수 차 {c.score_gap}): {c.interpretation}")
     else:
-        L.append("(해당 없음 — 작게 돌린 실행이라 비교 쌍이 빠졌거나, 상충 후보가 없음)")
+        L.append("(상충 후보 없음 — 비교 쌍 P1~P6의 점수 차가 모두 2점 미만)" if not state.get("only_criteria")
+                 else "(해당 없음 — `--criteria`로 좁혀 실행해 비교 쌍이 빠짐)")
     a = assessment.get(tech_id)
     if a:
         L += ["", f"**요약**: {a['요약']}", "", "**한계**:"] + [f"- {x}" for x in a["한계"]] + \
@@ -316,7 +310,7 @@ def _appendix(state: MainState) -> list[str]:
     return L
 
 
-def _reference(state: MainState) -> list[str]:
+def _reference(state: MainState, compact: bool = False) -> list[str]:
     cited = {b.evidence_id for r in state.get("final_results", []) for b in r.evidence}
     refs = [e for e in state.get("evidence_pool", []) if e.evidence_id in cited]
     L = ["## REFERENCE", "", "> 보고서 본문에서 실제로 인용한 자료만 출처 단위로 수록(같은 출처의 근거 여러 건은 1줄, "
@@ -328,8 +322,12 @@ def _reference(state: MainState) -> list[str]:
     rows = []
     for (loc, title, publisher), es in groups.items():
         best = min(es, key=lambda e: order[e.evidence_grade])
-        rows.append((order[best.evidence_grade], title, f"- [{best.evidence_grade}] {_short(title, 90)} — {publisher}, "
-                     f"{best.published_at or 'n.d.'}, {loc} (확인일 {best.accessed_at}; 인용 근거 {len(es)}건)"))
+        if compact:
+            rows.append((order[best.evidence_grade], title, f"- [{best.evidence_grade}] {_short(title, 48)} — {publisher}, "
+                         f"{best.published_at or 'n.d.'}, {_short(loc, 56)}"))
+        else:
+            rows.append((order[best.evidence_grade], title, f"- [{best.evidence_grade}] {_short(title, 90)} — {publisher}, "
+                         f"{best.published_at or 'n.d.'}, {loc} (확인일 {best.accessed_at}; 인용 근거 {len(es)}건)"))
     L += [r[2] for r in sorted(rows)]
     return L
 
@@ -343,6 +341,10 @@ def synthesize_report(state: MainState) -> dict:
     _dump(run_dir / "scores.json", state.get("final_results", []))
     _dump(run_dir / "search_log.json", state.get("search_log", []))
     _dump(run_dir / "info_gaps.json", state.get("info_gaps", []))
+    (run_dir / "final_assessment.json").write_text(json.dumps(upd["final_assessment"], ensure_ascii=False, indent=2),
+                                                   encoding="utf-8")
+    _dump(run_dir / "trl_results.json", state.get("trl_results", []))
+    _dump(run_dir / "conflicts.json", upd["conflicts"])
     progress.step("synthesize_report", "보고서 본문 조립 중")
 
     names = _names(state)

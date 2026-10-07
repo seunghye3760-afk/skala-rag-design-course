@@ -158,6 +158,7 @@ def _build_story(md_text: str, styles: dict, table_width: float) -> list:
     lines = md_text.split("\n")
     story: list = []
     i, n = 0, len(lines)
+    in_reference = False
     while i < n:
         line = lines[i]
         if not line.strip():
@@ -166,6 +167,8 @@ def _build_story(md_text: str, styles: dict, table_width: float) -> list:
         m = _HEADING_RE.match(line)
         if m:
             level, text = len(m.group(1)), m.group(2)
+            if level == 2:
+                in_reference = text.strip().startswith("REFERENCE")
             story.append(Spacer(1, 10 if level <= 2 else 6))
             story.append(Paragraph(_inline(text), styles[f"h{min(level, 4)}"]))
             i += 1
@@ -198,10 +201,12 @@ def _build_story(md_text: str, styles: dict, table_width: float) -> list:
             continue
         if _BULLET_RE.match(line):
             items = []
+            style = styles["ref"] if in_reference else styles["body"]
             while i < n and _BULLET_RE.match(lines[i]):
-                items.append(ListItem(Paragraph(_inline(_BULLET_RE.match(lines[i]).group(1)), styles["body"])))
+                items.append(ListItem(Paragraph(_inline(_BULLET_RE.match(lines[i]).group(1)), style)))
                 i += 1
-            story.append(ListFlowable(items, bulletType="bullet", leftIndent=14))
+            story.append(ListFlowable(items, bulletType="bullet", leftIndent=14,
+                                      bulletFontSize=style.fontSize))
             story.append(Spacer(1, 4))
             continue
         if _QUOTE_RE.match(line):
@@ -235,6 +240,7 @@ def _styles(font: str) -> dict:
         "cell": ParagraphStyle("cell", fontSize=8.5, leading=11, splitLongWords=1, **base),
         "quote": ParagraphStyle("quote", fontSize=9, leading=13, leftIndent=12,
                                 textColor=colors.HexColor("#555555"), **base),
+        "ref": ParagraphStyle("ref", fontSize=7.8, leading=10, **base),   # REFERENCE 목록 전용 (쪽수 제한)
     }
 
 
