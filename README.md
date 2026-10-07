@@ -24,12 +24,12 @@ TRL·시장성·이해관계자·도메인(AI 데이터센터 LLM 추론) 4관�
 
   | 실행 | 셀 수 | 수집 fan-out (라운드별) | 채점 셀 | 품질 평가 | 비고 |
   |---|---|---|---|---|---|
-  | `--criteria TRL-1,DOM-4` | 4 | **8 → 1 → 1 → 4** | 4 → 2 → 1 → 2 | 2회 (규칙 통과, Judge 미달 기록) | 마지막 4는 품질 미달 셀 재계획 |
-  | 전체 18항목 (14:43) | 36 | **78 → 4 → 5** (paper+web 30 · web+open_source 16 · web 32) | 36 → 7 → 3 | 2회 | 정보 공백 2, 121 스텝, 14분 |
-  | 전체 3회 연속 (PassK) | 36 | **78 / 72 / 74** → 5·4 / 12·8 / 8·12 | — | 3회 모두 규칙 통과, Judge 근거성·편향 3점 | 2·3회차는 Tavily 한도 소진으로 worker 52·58개 fallback, 그래도 정상 종료 |
+  | `--criteria TRL-1,DOM-4` | 4 | **8 → 1 → 1 → 4** | 4 → 2 → 1 → 2 | 2회 | 마지막 4는 품질 평가가 돌려보낸 셀의 재계획 |
+  | 전체 18항목 | 36 | **78 → 4 → 5** (paper+web 30 · web+open_source 16 · web 32) | 36 → 7 → 3 | 2회 | 정보 공백 2, 121 스텝, 14분 |
+  | 전체 3회 연속 (PassK) | 36 | **78 / 72 / 74** → 5·4 / 12·8 / 8·12 | 36 → … | 3회 모두 2회 | 2·3회차는 Tavily 한도 소진으로 worker 52·58개가 fallback 처리됐으나 정상 종료 |
   | 가짜 모드 (`KV_FAKE=1`) | 36 | 54 | 36 | 통과 | 키 없이 뼈대 검증 |
 
-  플래너가 매번 다른 계획을 내도 셀 커버리지는 코드 가드가 유지하고, 모든 실행이 무한 루프 없이 종료했습니다. LangSmith 캡처: {tracing-1/2/3.png 기입}
+  플래너가 매번 다른 계획을 내도 셀 커버리지는 코드 가드가 유지하고, 모든 실행이 무한 루프 없이 종료했습니다. 품질 규칙은 전 실행 통과, LLM Judge 점수는 `report_meta.json`에 기록됩니다. LangSmith 캡처: {tracing-1/2/3.png 기입}
 
 ---
 
@@ -60,8 +60,8 @@ TRL·시장성·이해관계자·도메인(AI 데이터센터 LLM 추론) 4관�
 ## Tech Stack
 
 - **Framework** : LangGraph (StateGraph · Send · reducer · defer join · MemorySaver), LangChain
-- **LLM / Generator** : GPT-5.5 (`configs/runtime.yaml llm.model`; 개발 중에는 `.env KV_LLM_MODEL`로 gpt-5.4-mini 사용)
-- **LLM / Judge** : GPT-5.5 (Generator와 같은 `llm.chat_model()`, `with_structured_output`, temperature 미지정)
+- **LLM / Generator** : gpt-5.4-mini (플래너·근거 추출·채점·종합 공통, `.env KV_LLM_MODEL`로 지정; 기본값 `configs/runtime.yaml llm.model`)
+- **LLM / Judge** : gpt-5.4-mini (Generator와 같은 `llm.chat_model()`, `with_structured_output`)
 - **Retrieval** : FAISS + BM25 (RRF, Top-K 5) — Hit Rate@5 {실측값 기입}, MRR {실측값 기입} (`eval/retrieval/run_selection.py`)
 - **Embedding** : BAAI/bge-m3 (오픈소스)
 - **Web Search** : Tavily (max_results 5, period_from 2025-01-01)
@@ -95,7 +95,7 @@ TRL·시장성·이해관계자·도메인(AI 데이터센터 LLM 추론) 4관�
 | `collect_worker` 예외 | 같은 입력으로 1회 재시도 → 실패 시 그 셀만 **제외**(`status=excluded`), 나머지 브랜치 계속 | `node_status`, `errors[]`, `last_error`, `info_gaps` |
 | `score_worker` 예외 | 1회 재시도 → 해당 항목 **NA** | `node_status=failed`, `errors[]` |
 | 플래너 LLM 실패 | 1회 재시도 → 루브릭 기본 템플릿으로 비상 계획 | `decision_log: plan_fallback_default` |
-| 품질 평가 한도 도달 | 미달 항목을 SUMMARY 끝에 기록하고 **정상 종료** (`status=PARTIAL`) | `report_meta.json` |
+| 품질 평가 한도 도달 | 남은 지적 사항을 SUMMARY 끝에 기록하고 **정상 종료** (`status=PARTIAL`) | `report_meta.json` |
 
 ---
 
@@ -220,9 +220,9 @@ uv run python app_agent.py                          # 전체 18항목
 
 ---
 
-## 채점 기준 대응
+## 요구사항 구현 현황
 
-| 항목 | 증빙 위치 |
+| 요구사항 | 구현 위치 |
 |---|---|
 | 패턴 적용 정합성 | `orchestrator/plan.py`(구조화 서브태스크 `task_plan`), `dispatch.py`(pending만 Send, worker 래퍼 fallback), `graph.py`(`add_conditional_edges` 3곳), `runtime.yaml fallback` |
 | 동적 동작 실증 | 위 Overview "동적 처리"의 라운드별 fan-out, `decision_log.jsonl`, LangSmith `tracing-*.png` |
