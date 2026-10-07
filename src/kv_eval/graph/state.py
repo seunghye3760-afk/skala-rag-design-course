@@ -6,6 +6,7 @@ from typing import Annotated, TypedDict
 
 from langgraph.graph.message import add_messages
 
+from ..orchestrator.schema import Plan, WorkerOutcome
 from .task_schema import ConflictCandidate, CriterionResult, Evidence, RetryTarget, TRLResult
 
 
@@ -16,6 +17,8 @@ class MainState(TypedDict, total=False):
     domain: dict
     rubrics: dict
     tech_briefs: dict
+    plan: Plan                         # Orchestrator의 현재 라운드 계획 (라운드마다 덮어씀)
+    worker_outcomes: Annotated[list[WorkerOutcome], operator.add]   # Worker별 done/excluded
     evidence_pool: Annotated[list[Evidence], operator.add]
     search_log: Annotated[list[dict], operator.add]
     criterion_results: Annotated[list[CriterionResult], operator.add]

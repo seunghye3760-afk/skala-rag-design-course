@@ -162,7 +162,7 @@ def balance_check(state: MainState) -> dict:
 def route_after_balance(state: MainState) -> str:
     targets = state.get("retry_targets") or []
     if any(x.kind == "research" for x in targets):
-        return "dispatch_collect"
+        return "plan_tasks"            # 근거 문제 → Orchestrator 재계획
     if targets:
         return "score_dispatch"        # 형식 오류만 → 근거 수집 건너뛰고 재채점
     return "apply_rules"

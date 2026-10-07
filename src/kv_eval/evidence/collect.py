@@ -6,6 +6,10 @@
   → 0건이면 쿼리 재작성 1회 → 그래도 0건이면 빈 리스트 (NA 후보)
 
 KV_FAKE=1 이면 가짜 근거를 돌려준다 (그래프 뼈대 테스트용, tests/conftest.py가 설정).
+
+Orchestrator-Workers: Worker(orchestrator/workers.py)는 channel과 계획된 queries를 넘겨
+채널 하나만 수집한다. channel=None이면 예전처럼 허용 채널 전부를 한 번에 수집한다.
+  - rag: 논문 코퍼스 / web: 웹 검색 / open_source: 저장소·이슈 트래커 한정 웹 검색
 """
 from __future__ import annotations
 
@@ -55,25 +59,27 @@ class _Rewrite(BaseModel):
     con: str
 
 
-def collect_evidence(task: CollectTask) -> dict:
+def collect_evidence(task: CollectTask, channel: str | None = None, queries: dict | None = None) -> dict:
     tech_id, cid = task.tech["tech_id"], task.criterion["id"]
-    progress.step("collect_evidence", f"{tech_id} {cid} (round {task.round}) 시작")
-    queries = _build_queries(task)
+    label = f"{tech_id} {cid}" + (f" [{channel}]" if channel else "")
+    progress.step("collect_evidence", f"{label} (round {task.round}) 시작")
+    queries = queries or _build_queries(task)
 
     if os.getenv("KV_FAKE") == "1":
-        evidence, rewritten = fake_evidence(task), False
+        evidence, rewritten = _tag_ids(fake_evidence(task), channel), False
     else:
-        evidence = _collect_once(task, queries)
+        evidence = _collect_once(task, queries, channel)
         rewritten = False
         if not evidence and task.query_rewrite_count < runtime()["retry"]["query_rewrite_max"]:
             queries = _rewrite_queries(task, queries)
-            evidence = _collect_once(task, queries)
+            evidence = _collect_once(task, queries, channel)
             rewritten = True
         evidence = _dedupe(evidence)
 
-    log = [{"tech_id": tech_id, "criterion_id": cid, "round": task.round, "queries": queries,
-            "results": len(evidence), "rewritten": rewritten, "searched_at": date.today().isoformat()}]
-    progress.step("collect_evidence", f"{tech_id} {cid} 완료 — 근거 {len(evidence)}건"
+    log = [{"tech_id": tech_id, "criterion_id": cid, "channel": channel or "all", "round": task.round,
+            "queries": queries, "results": len(evidence), "rewritten": rewritten,
+            "searched_at": date.today().isoformat()}]
+    progress.step("collect_evidence", f"{label} 완료 — 근거 {len(evidence)}건"
                   + (" (쿼리 재작성함)" if rewritten else ""))
     return {"evidence_pool": evidence, "search_log": log}
 
@@ -85,11 +91,22 @@ def _build_queries(task: CollectTask) -> dict:
             for stance, tpl in task.criterion["queries"].items()}
 
 
-def _collect_once(task: CollectTask, queries: dict) -> list[Evidence]:
+def _tag_ids(evidence: list[Evidence], channel: str | None) -> list[Evidence]:
+    """채널별 Worker가 같은 셀에 근거를 쌓으므로 evidence_id에 채널을 붙여 충돌을 막는다."""
+    if not channel:
+        return evidence
+    return [e.model_copy(update={"evidence_id": f"{e.evidence_id}-{channel}"}) for e in evidence]
+
+
+def _collect_once(task: CollectTask, queries: dict, channel: str | None = None) -> list[Evidence]:
+    return _tag_ids(_collect_channels(task, queries, channel), channel)
+
+
+def _collect_channels(task: CollectTask, queries: dict, channel: str | None) -> list[Evidence]:
     max_results = runtime()["web_search"]["max_results"]
     out: list[Evidence] = []
 
-    if uses_rag(task.criterion):
+    if uses_rag(task.criterion) and channel in (None, "rag"):
         from ..tools import paper_search
 
         for chunk in _search_papers(task, queries):
@@ -97,6 +114,11 @@ def _collect_once(task: CollectTask, queries: dict) -> list[Evidence]:
                                     len(out), source_title=chunk.locator.doc_id or "corpus",
                                     publisher="corpus", locator=chunk.locator, force_source_type="논문",
                                     published_at=paper_search.doc_published(chunk.locator.doc_id)))
+
+    if channel == "rag":
+        return [e for e in out if e.relevant]
+    if channel == "open_source":   # 저장소·이슈 트래커 한정 (구현 공개·재현·개발자 반응)
+        queries = {k: [f"{q} site:github.com" for q in qs] for k, qs in queries.items()}
 
     # 1차 패스: 검색 결과 fetch·추출 + 인용된 1차 출처 URL을 대기열에 추가(셀당 최대 5건).
     # 추가된 1차 출처도 같은 파이프라인으로 fetch·추출되어 자체 근거가 된다.

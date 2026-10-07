@@ -1,7 +1,7 @@
-"""병렬 작업 분배 (설계서 D-1, 그림 2).
+"""채점 작업 분배와 join 노드.
 
-- 수집: 최초 36개(항목 18 × 기술 2), 재시도 때는 kind="research" 대상만.
-- 채점: 최초 8개(관점 4 × 기술 2), 재시도 때는 retry_targets 항목만 관점·기술별로 묶어서.
+- 수집 분배는 Orchestrator(orchestrator/planner.py)가 계획 기반으로 한다.
+- 채점: round 0은 계획에 포함된 셀을 관점·기술별로 묶어서, 재시도 때는 retry_targets 항목만.
 """
 from __future__ import annotations
 
@@ -10,33 +10,14 @@ from collections import defaultdict
 from langgraph.types import Send
 
 from .. import progress
-from ..config import agent_of, criteria_list, criterion
+from ..config import agent_of
 from .reducers import evidence_for
 from .state import MainState
-from .task_schema import CollectTask, ScoreTask
+from .task_schema import ScoreTask
 
 
 def _tech(state: MainState, tech_id: str) -> dict:
     return next(t for t in state["technologies"] if t["tech_id"] == tech_id)
-
-
-def dispatch_collect(state: MainState) -> dict:
-    """노드 자체는 하는 일이 없고, 뒤의 fan_out_collect가 Send를 만든다."""
-    return {}
-
-
-def fan_out_collect(state: MainState) -> list[Send]:
-    rnd = state.get("retry_round", 0)
-    rub = state["rubrics"]
-    if rnd == 0:
-        cells = [(t, c, None) for t in state["technologies"]
-                 for c in criteria_list(rub, state.get("only_criteria"))]
-    else:
-        cells = [(_tech(state, x.tech_id), criterion(rub, x.criterion_id), x.hint)
-                 for x in state.get("retry_targets", []) if x.kind == "research"]
-    progress.step("dispatch_collect", f"수집 작업 {len(cells)}개 생성 (round {rnd})")
-    return [Send("collect_evidence", CollectTask(tech=t, criterion=c, round=rnd, rewrite_hint=h))
-            for t, c, h in cells]
 
 
 def score_dispatch(state: MainState) -> dict:
@@ -48,9 +29,8 @@ def fan_out_score(state: MainState) -> list[Send]:
     rub = state["rubrics"]
     groups: dict[tuple[str, str], list[str]] = defaultdict(list)
     if rnd == 0:
-        for t in state["technologies"]:
-            for c in criteria_list(rub, state.get("only_criteria")):
-                groups[(c["agent"], t["tech_id"])].append(c["id"])
+        for tech_id, cid in state["plan"].cells():
+            groups[(agent_of(rub, cid), tech_id)].append(cid)
     else:
         for x in state.get("retry_targets", []):
             groups[(agent_of(rub, x.criterion_id), x.tech_id)].append(x.criterion_id)
@@ -66,8 +46,12 @@ def fan_out_score(state: MainState) -> list[Send]:
 
 
 def evidence_join(state: MainState) -> dict:
-    """수집 병렬 작업이 모두 끝난 뒤 한 번 실행된다 (join)."""
-    progress.step("evidence_join", f"근거 {len(state.get('evidence_pool', []))}건 누적")
+    """Worker가 모두 끝난 뒤 한 번 실행된다 (join)."""
+    rnd = state.get("retry_round", 0)
+    outs = [o for o in state.get("worker_outcomes", []) if o.round == rnd]
+    excluded = [o.subtask_id for o in outs if o.status == "excluded"]
+    progress.step("evidence_join", f"round {rnd} Worker {len(outs)}개 완료 (제외 {len(excluded)}) · "
+                  f"근거 {len(state.get('evidence_pool', []))}건 누적")
     return {}
 
 
