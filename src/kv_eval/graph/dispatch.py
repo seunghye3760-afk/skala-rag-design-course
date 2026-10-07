@@ -1,68 +1,27 @@
-"""병렬 작업 분배 (설계서 D-1, 그림 2).
-
-- 수집: 최초 36개(항목 18 × 기술 2), 재시도 때는 kind="research" 대상만.
-- 채점: 최초 8개(관점 4 × 기술 2), 재시도 때는 retry_targets 항목만 관점·기술별로 묶어서.
-"""
+"""WorkPlan의 작업을 LangGraph Send로 병렬 분배하고 결과를 합류시킨다."""
 from __future__ import annotations
-
-from collections import defaultdict
 
 from langgraph.types import Send
 
 from .. import progress
-from ..config import agent_of, criteria_list, criterion
-from .reducers import evidence_for
+from .planner import plan_collect_work, plan_score_work
 from .state import MainState
-from .task_schema import CollectTask, ScoreTask
 
-
-def _tech(state: MainState, tech_id: str) -> dict:
-    return next(t for t in state["technologies"] if t["tech_id"] == tech_id)
-
-
-def dispatch_collect(state: MainState) -> dict:
-    """노드 자체는 하는 일이 없고, 뒤의 fan_out_collect가 Send를 만든다."""
-    return {}
+# main.py의 기존 노드 이름을 유지하는 호환 alias. 실제 계획은 planner.py가 만든다.
+dispatch_collect = plan_collect_work
+score_dispatch = plan_score_work
 
 
 def fan_out_collect(state: MainState) -> list[Send]:
-    rnd = state.get("retry_round", 0)
-    rub = state["rubrics"]
-    if rnd == 0:
-        cells = [(t, c, None) for t in state["technologies"]
-                 for c in criteria_list(rub, state.get("only_criteria"))]
-    else:
-        cells = [(_tech(state, x.tech_id), criterion(rub, x.criterion_id), x.hint)
-                 for x in state.get("retry_targets", []) if x.kind == "research"]
-    progress.step("dispatch_collect", f"수집 작업 {len(cells)}개 생성 (round {rnd})")
-    return [Send("collect_evidence", CollectTask(tech=t, criterion=c, round=rnd, rewrite_hint=h))
-            for t, c, h in cells]
-
-
-def score_dispatch(state: MainState) -> dict:
-    return {}
+    tasks = state["work_plan"].collect_tasks
+    progress.step("dispatch_collect", f"계획된 수집 작업 {len(tasks)}개 분배")
+    return [Send("collect_evidence", task) for task in tasks]
 
 
 def fan_out_score(state: MainState) -> list[Send]:
-    rnd = state.get("retry_round", 0)
-    rub = state["rubrics"]
-    groups: dict[tuple[str, str], list[str]] = defaultdict(list)
-    if rnd == 0:
-        for t in state["technologies"]:
-            for c in criteria_list(rub, state.get("only_criteria")):
-                groups[(c["agent"], t["tech_id"])].append(c["id"])
-    else:
-        for x in state.get("retry_targets", []):
-            groups[(agent_of(rub, x.criterion_id), x.tech_id)].append(x.criterion_id)
-    pool = state.get("evidence_pool", [])
-    sends = []
-    for (agent, tech_id), cids in groups.items():
-        ev = [e for cid in cids for e in evidence_for(pool, tech_id, cid)]
-        sends.append(Send("score_task", ScoreTask(
-            tech=_tech(state, tech_id), agent_type=agent, criterion_ids=cids, evidence=ev,
-            tech_brief=state.get("tech_briefs", {}).get(tech_id, {}), round=rnd)))
-    progress.step("score_dispatch", f"채점 작업 {len(sends)}개 생성 (round {rnd})")
-    return sends
+    tasks = state["work_plan"].score_tasks
+    progress.step("score_dispatch", f"계획된 채점 작업 {len(tasks)}개 분배")
+    return [Send("score_task", task) for task in tasks]
 
 
 def evidence_join(state: MainState) -> dict:
