@@ -48,7 +48,10 @@ def _llm_evaluate(state: MainState, draft: str, checks: dict[str, bool]) -> Qual
 
     rt = runtime()["llm"]
     model = ChatOpenAI(model=rt.get("model") or "gpt-4.1-mini", temperature=0)
-    judge = model.with_structured_output(QualityEvaluation)
+    # QualityEvaluation.checks is a free-form mapping. OpenAI's strict
+    # json_schema response format rejects such mappings, while tool/function
+    # calling supports the same Pydantic model and remains structured.
+    judge = model.with_structured_output(QualityEvaluation, method="function_calling")
     evidence_ids = [e.evidence_id for e in state.get("evidence_pool", [])]
     prompt = (
         "다음 기술평가 보고서를 Groundedness, 중립성, 편향 통제, 4개 관점 커버리지로 평가하라. "
